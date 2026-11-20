@@ -486,24 +486,42 @@
     sat_fat: f.sat_fat == null ? null : f.sat_fat * g / 100, sodium_mg: f.sodium_mg == null ? null : f.sodium_mg * g / 100 });
   const SRC = { off: "Open Food Facts", usda: "USDA", mine: "My food", mfp: "MyFitnessPal" };
 
-  function foodSheet(meal) {
-    let q = "", ctrl = null, timer = null, filter = "all";
+  // pick: when set, the sheet chooses an ingredient for a meal instead of logging to the diary.
+  function foodSheet(meal, pick) {
+    let q = "", ctrl = null, timer = null, filter = "all", mealsP = null, tok = 0;
+    const getMeals = () => mealsP || (mealsP = loadMeals().catch(() => []));
+    const saved = m => { mealsP = null; draw(); if (m) mealLogSheet(m, meal, saved); };
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
-      const title = h("h2", { text: `Add to ${MEAL[meal]}` });
-      const head = sheetHead("", { left: ["Close", closeSheet] }); head.children[1].replaceWith(title);
+      const title = h("h2", { text: pick ? "Add ingredient" : `Add to ${MEAL[meal]}` });
+      const head = sheetHead("", { left: [pick ? "‹ Back" : "Close", closeSheet] }); head.children[1].replaceWith(title);
       const search = textIn("", { type: "search", placeholder: "Search foods", enterkeyhint: "search", "aria-label": "Search foods" });
       const results = h("div", { style: "display:grid;gap:10px" });
+      const filters = [["all", "All"], ["recent", "Recent"], ["mine", "My foods"]];
+      if (!pick) filters.push(["meals", "My meals"]);
       pg.append(head,
-        seg(MEALS, meal, v => { meal = v; title.textContent = `Add to ${MEAL[v]}`; }),
-        h("div", { class: "searchrow" }, search, h("button", { class: "scanbtn", "aria-label": "Scan a barcode", html: ICON.scan, onclick: () => scanSheet(meal) })),
+        pick ? null : seg(MEALS, meal, v => { meal = v; title.textContent = `Add to ${MEAL[v]}`; }),
+        h("div", { class: "searchrow" }, search, h("button", { class: "scanbtn", "aria-label": "Scan a barcode", html: ICON.scan, onclick: () => scanSheet(meal, pick) })),
         h("div", { class: "row", style: "justify-content:flex-start;gap:8px" },
-          h("button", { class: "pill", text: "Quick add", onclick: () => quickAddSheet(meal) }),
-          h("button", { class: "pill", text: "Create food", onclick: () => createFoodSheet(meal, null) })),
-        seg([["all", "All"], ["recent", "Recent"], ["mine", "My foods"]], "all", v => { filter = v; draw(); }),
+          pick ? null : h("button", { class: "pill", text: "Quick add", onclick: () => quickAddSheet(meal) }),
+          h("button", { class: "pill", text: "Create food", onclick: () => createFoodSheet(meal, null, pick) }),
+          pick ? null : h("button", { class: "pill", text: "Create meal", onclick: () => mealBuilderSheet(null, saved) })),
+        seg(filters, "all", v => { filter = v; draw(); }),
         results);
 
-      const row = f => h("button", { type: "button", onclick: () => amountSheet(f, meal) },
+      const mealRow = m => { const mi = mealInfo(m);
+        return h("button", { type: "button", onclick: () => mealLogSheet(m, meal, saved) },
+          h("div", null, h("div", { class: "nm", text: m.name }),
+            h("div", { class: "sub", text: [`per portion (${mi.portions} in total)`, `${m.ings.length} ingredient${m.ings.length === 1 ? "" : "s"}`, mi.tot.fibre == null ? "fibre not listed" : `fibre ${r1(mi.tot.fibre / mi.portions)} g`].join(" · ") })),
+          h("div", { class: "kc num" }, fmt(mi.tot.kcal / mi.portions), h("small", { text: "kcal" }))); };
+      const mealBlock = (label, list, note) => {
+        const b = h("div", { class: "res" }, h("div", { class: "lbl", text: label }));
+        if (note) b.append(h("div", { class: "empty", style: "padding:6px 0 12px", text: note }));
+        list.forEach(m => b.append(mealRow(m)));
+        return b;
+      };
+
+      const row = f => h("button", { type: "button", onclick: () => amountSheet(f, meal, pick) },
         h("div", null, h("div", { class: "nm", text: f.name }),
           h("div", { class: "sub", text: [f.brand, SRC[f.source], `per 100 ${U(f)}`, f.fibre == null ? "fibre not listed" : `fibre ${r1(f.fibre)} g`].filter(Boolean).join(" · ") })),
         h("div", { class: "kc num" }, fmt(f.kcal), h("small", { text: "kcal" })));
@@ -516,13 +534,22 @@
 
       async function draw() {
         clearTimeout(timer); if (ctrl) ctrl.abort();
+        const my = ++tok;
         results.innerHTML = "";
-        const term = q.trim();
+        const term = q.trim(), lt = term.toLowerCase();
+        const matchMeals = async () => (await getMeals()).filter(m => !lt || m.name.toLowerCase().includes(lt));
+        if (filter === "meals") {
+          const ms = await matchMeals(); if (my !== tok) return;
+          results.append(mealBlock("My meals", ms, ms.length ? null : (lt ? "No meals match." : "Build a meal from its ingredients once, then log it in one tap. Tap Create meal.")));
+          return;
+        }
         let local = sb.from("foods").select("*");
         if (filter === "mine") local = local.eq("source", "mine");
         if (term) local = local.ilike("name", `%${term.replace(/[%_]/g, "")}%`);
         local = local.order("last_used", { ascending: false, nullsFirst: false }).limit(30);
-        const { data: mine } = await local;
+        const [{ data: mine }, ms] = await Promise.all([local, !pick && filter === "all" ? matchMeals() : []]);
+        if (my !== tok) return;
+        if (ms.length) results.append(mealBlock("My meals", term ? ms : ms.slice(0, 5)));
         if (!term) {
           results.append(block(filter === "mine" ? "My foods" : "Recent", mine || [], (mine || []).length ? null : (filter === "mine" ? "Foods you create appear here." : "Foods you log appear here for one-tap adding.")));
           results.append(h("div", { class: "small muted", style: "text-align:center", text: "Calories shown per 100 g, or per 100 ml for drinks." }));
@@ -557,16 +584,31 @@
     } catch (_) { return f; }
   }
 
-  async function amountSheet(f0, meal) {
+  // Saves a database food into your foods table (or touches last_used) and returns its id.
+  async function ensureFood(f) {
+    const now = new Date().toISOString();
+    if (f.id) { await sb.from("foods").update({ last_used: now }).eq("id", f.id); return f.id; }
+    const { id, created_at, ...row } = f;
+    const { data, error } = await sb.from("foods").upsert(Object.assign(row, { user_id: S.user.id, last_used: now }), { onConflict: "user_id,source,source_id" }).select("id").single();
+    if (error) throw error;
+    return data.id;
+  }
+  const rnd = n => ({ kcal: r1(n.kcal), protein: r1(n.protein), carbs: r1(n.carbs), fat: r1(n.fat), fibre: n.fibre == null ? null : r1(n.fibre),
+    sugar: n.sugar == null ? null : r1(n.sugar), sat_fat: n.sat_fat == null ? null : r1(n.sat_fat), sodium_mg: n.sodium_mg == null ? null : Math.round(n.sodium_mg) });
+  const nGrid = n => h("div", { class: "ngrid num" }, ...[["kcal", fmt(n.kcal), "kcal", "var(--kcal)"], ["Protein", r1(n.protein), "g", "var(--prot)"], ["Carbs", r1(n.carbs), "g"], ["Fat", r1(n.fat), "g"], ["Fibre", n.fibre == null ? "–" : r1(n.fibre), n.fibre == null ? "" : "g", "var(--fibre)"]]
+    .map(([k, v, u, c]) => h("div", null, h("span", { class: "v", style: c ? `color:${c}` : "" }, v, u ? h("small", { text: u }) : null), h("span", { class: "k", text: k }))));
+
+  async function amountSheet(f0, meal, pick) {
     const f = await enrichOff(f0);
     const base = U(f);
     const hasServing = f.serving_g && f.serving_g > 0;
     const hasPack = f.pack_g && f.pack_g > 0;
-    let unit = hasServing ? "serving" : "base";
+    // Meal ingredients default to weight; diary logging defaults to a serving.
+    let unit = hasServing && !pick ? "serving" : "base";
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
       pg.append(sheetHead("Amount", { left: ["‹ Back", closeSheet] }));
-      const qIn = numIn(hasServing ? 1 : 100, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
+      const qIn = numIn(unit === "serving" ? 1 : 100, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
       const uLbl = h("span", { class: "u" });
       const grid = h("div"), extra = h("div", { class: "small muted num" });
       const size = () => unit === "serving" ? f.serving_g : unit === "pack" ? f.pack_g : 1;
@@ -576,8 +618,7 @@
         const n = per(f, grams());
         uLbl.textContent = unitText();
         grid.innerHTML = "";
-        grid.append(h("div", { class: "ngrid num" }, ...[["kcal", fmt(n.kcal), "kcal", "var(--kcal)"], ["Protein", r1(n.protein), "g", "var(--prot)"], ["Carbs", r1(n.carbs), "g"], ["Fat", r1(n.fat), "g"], ["Fibre", n.fibre == null ? "–" : r1(n.fibre), n.fibre == null ? "" : "g", "var(--fibre)"]]
-          .map(([k, v, u, c]) => h("div", null, h("span", { class: "v", style: c ? `color:${c}` : "" }, v, u ? h("small", { text: u }) : null), h("span", { class: "k", text: k })))));
+        grid.append(nGrid(n));
         extra.textContent = [`${r1(grams())} ${base}`, n.sugar != null ? `sugar ${r1(n.sugar)} g` : null, n.sat_fat != null ? `sat fat ${r1(n.sat_fat)} g` : null, n.sodium_mg != null ? `sodium ${fmt(n.sodium_mg)} mg` : null].filter(Boolean).join(" · ");
       };
       qIn.addEventListener("input", draw);
@@ -589,28 +630,19 @@
       units.push(["base", base === "ml" ? "Millilitres" : "Grams"]);
       const unitSeg = units.length > 1 ? seg(units, unit, v => { const g = grams(); unit = v; qIn.value = r1(g / size()); draw(); }) : null;
       const msg = h("div", { class: "msg", role: "status" });
-      const add = h("button", { class: "btn", type: "button", text: "Add to diary" });
+      const add = h("button", { class: "btn", type: "button", text: pick ? "Add to meal" : "Add to diary" });
       add.addEventListener("click", async () => {
         const g = grams();
         if (!(g > 0)) { msg.className = "msg err"; msg.textContent = "Enter an amount."; return; }
         add.disabled = true;
         try {
-          let foodId = f.id;
-          const now = new Date().toISOString();
-          if (!foodId) {
-            const { id, created_at, ...row } = f;
-            const { data, error } = await sb.from("foods").upsert(Object.assign(row, { user_id: S.user.id, last_used: now }), { onConflict: "user_id,source,source_id" }).select("id").single();
-            if (error) throw error; foodId = data.id;
-          } else {
-            await sb.from("foods").update({ last_used: now }).eq("id", foodId);
-          }
+          const foodId = await ensureFood(f);
+          if (pick) { pick(Object.assign({}, f, { id: foodId }), r1(g)); return; }
           const n = per(f, g);
           const q = r1(num(qIn.value));
           const label = unit === "serving" ? `${q} × ${f.serving_name || "serving"} (${r1(g)} ${base})`
             : unit === "pack" ? `${q} × pack${f.pack_name ? " " + f.pack_name : ""} (${r1(g)} ${base})` : `${r1(g)} ${base}`;
-          const { error } = await sb.from("diary_entries").insert({ date: S.day, meal, food_id: foodId, name: f.brand ? `${f.name} (${f.brand})` : f.name, amount_label: label, grams: r1(g),
-            kcal: r1(n.kcal), protein: r1(n.protein), carbs: r1(n.carbs), fat: r1(n.fat), fibre: n.fibre == null ? null : r1(n.fibre),
-            sugar: n.sugar == null ? null : r1(n.sugar), sat_fat: n.sat_fat == null ? null : r1(n.sat_fat), sodium_mg: n.sodium_mg == null ? null : Math.round(n.sodium_mg), source: f.source });
+          const { error } = await sb.from("diary_entries").insert(Object.assign({ date: S.day, meal, food_id: foodId, name: f.brand ? `${f.name} (${f.brand})` : f.name, amount_label: label, grams: r1(g), source: f.source }, rnd(n)));
           if (error) throw error;
           closeAll(); toast(`Added to ${MEAL[meal].toLowerCase()}`); await refresh();
         } catch (e) { msg.className = "msg err"; msg.textContent = errText(e); add.disabled = false; }
@@ -622,7 +654,7 @@
           h("div", { class: "stepper" }, h("button", { type: "button", text: "−", "aria-label": "Less", onclick: () => step(-stepSize()) }), h("div", { class: "unitwrap" }, qIn, uLbl),
             h("button", { type: "button", text: "+", "aria-label": "More", onclick: () => step(stepSize()) })),
           grid, extra),
-        h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
+        pick ? null : h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
         msg, add);
       draw();
     });
@@ -652,7 +684,7 @@
     });
   }
 
-  function createFoodSheet(meal, barcode) {
+  function createFoodSheet(meal, barcode, pick) {
     let basis = "serving", fu = "g";
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
@@ -679,7 +711,7 @@
         save.disabled = true;
         const { data, error } = await sb.from("foods").insert(row).select("*").single();
         if (error) { msg.className = "msg err"; msg.textContent = errText(error); save.disabled = false; return; }
-        closeSheet(); toast("Saved to My foods"); amountSheet(data, meal);
+        closeSheet(); toast("Saved to My foods"); amountSheet(data, meal, pick);
       });
       pg.append(sheetHead("Create food", { left: ["‹ Back", closeSheet] }),
         h("section", { class: "card" }, field("Name", name), field("Brand", brand),
@@ -695,11 +727,173 @@
     });
   }
 
+  // ================= MY MEALS =================
+  // A meal is a recipe: ingredients (foods) with grams, split into portions.
+  // total_g (optional) is the cooked weight, so a meal can also be logged by weight.
+  const NK = ["kcal", "protein", "carbs", "fat", "fibre", "sugar", "sat_fat", "sodium_mg"];
+  async function loadMeals() {
+    const { data, error } = await sb.from("meals").select("id,name,total_g,portions,created_at,meal_ingredients(id,grams,food:foods(*))").order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map(m => Object.assign(m, { ings: (m.meal_ingredients || []).filter(i => i.food).map(i => ({ food: i.food, grams: Number(i.grams) })) }));
+  }
+  function mealInfo(m) {
+    const portions = Number(m.portions) > 0 ? Number(m.portions) : 1;
+    const tot = {}, known = {};
+    NK.forEach(k => { tot[k] = 0; known[k] = 0; });
+    let weight = 0, fibreMissing = 0;
+    m.ings.forEach(i => {
+      const n = per(i.food, n0(i.grams));
+      NK.forEach(k => { if (n[k] != null) { tot[k] += n[k]; known[k]++; } });
+      if (i.food.fibre == null) fibreMissing++;
+      weight += n0(i.grams);
+    });
+    NK.forEach(k => { if (m.ings.length && !known[k]) tot[k] = null; });
+    return { portions, tot, weight, fibreMissing, scaled: f => Object.fromEntries(NK.map(k => [k, tot[k] == null ? null : tot[k] * f])) };
+  }
+
+  function mealLogSheet(m, meal, onChange) {
+    const mi = mealInfo(m);
+    const cooked = Number(m.total_g) > 0 ? Number(m.total_g) : null;
+    let unit = "portion";
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      pg.append(sheetHead("My meal", { left: ["‹ Back", closeSheet], right: ["Edit", () => mealBuilderSheet(m, m2 => { closeSheet(); onChange(m2); })] }));
+      const qIn = numIn(1, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
+      const uLbl = h("span", { class: "u" });
+      const grid = h("div"), extra = h("div", { class: "small muted num" });
+      const frac = () => { const q = num(qIn.value) || 0; return unit === "portion" ? q / mi.portions : q / cooked; };
+      const draw = () => {
+        uLbl.textContent = unit === "portion" ? "portion" : "g";
+        grid.innerHTML = ""; grid.append(nGrid(mi.scaled(frac())));
+        extra.textContent = unit === "portion" ? `The whole meal makes ${mi.portions} portion${mi.portions === 1 ? "" : "s"}${cooked ? ` · ${r1(frac() * cooked)} g cooked` : ""}` : `${r1(frac() * mi.portions)} of ${mi.portions} portions`;
+      };
+      qIn.addEventListener("input", draw);
+      const step = d => { qIn.value = Math.max(0, r1((num(qIn.value) || 0) + d)); draw(); };
+      const unitSeg = cooked ? seg([["portion", "Portions"], ["g", "Grams (cooked)"]], unit, v => { const f = frac(); unit = v; qIn.value = r1(v === "portion" ? f * mi.portions : f * cooked); draw(); }) : null;
+      const ingCard = h("section", { class: "card" }, h("h3", { text: "Ingredients (whole meal)" }));
+      m.ings.forEach(i => ingCard.append(h("div", { class: "row small", style: "border-top:1px solid var(--line);padding-top:6px" },
+        h("span", { class: "nm", text: i.food.name }), h("span", { class: "muted num", style: "white-space:nowrap", text: `${r1(i.grams)} ${U(i.food)} · ${fmt(per(i.food, i.grams).kcal)} kcal` }))));
+      const msg = h("div", { class: "msg", role: "status" });
+      const add = h("button", { class: "btn", type: "button", text: "Add to diary" });
+      add.addEventListener("click", async () => {
+        const f = frac(), q = r1(num(qIn.value) || 0);
+        if (!(f > 0)) { msg.className = "msg err"; msg.textContent = "Enter an amount."; return; }
+        add.disabled = true;
+        const label = unit === "g" ? `${q} g` : `${q} portion${q === 1 ? "" : "s"}${mi.portions !== 1 ? ` of ${mi.portions}` : ""}`;
+        const { error } = await sb.from("diary_entries").insert(Object.assign({ date: S.day, meal, meal_id: m.id, name: m.name, amount_label: label,
+          grams: cooked ? r1(f * cooked) : null, source: "meal" }, rnd(mi.scaled(f))));
+        if (error) { msg.className = "msg err"; msg.textContent = errText(error); add.disabled = false; return; }
+        closeAll(); toast(`Added to ${MEAL[meal].toLowerCase()}`); await refresh();
+      });
+      pg.append(
+        h("section", { class: "card" },
+          h("div", null, h("h2", { text: m.name }), mi.fibreMissing ? h("div", { class: "small muted", text: `Fibre not listed for ${mi.fibreMissing} ingredient${mi.fibreMissing === 1 ? "" : "s"}` }) : null),
+          unitSeg,
+          h("div", { class: "stepper" }, h("button", { type: "button", text: "−", "aria-label": "Less", onclick: () => step(unit === "g" ? -10 : -0.5) }),
+            h("div", { class: "unitwrap wide" }, qIn, uLbl),
+            h("button", { type: "button", text: "+", "aria-label": "More", onclick: () => step(unit === "g" ? 10 : 0.5) })),
+          grid, extra),
+        h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
+        msg, add, ingCard);
+      draw();
+    });
+  }
+
+  // onSaved(meal) after save, onSaved(null) after delete. The builder closes itself first.
+  function mealBuilderSheet(m, onSaved) {
+    const ings = m ? m.ings.map(i => ({ food: i.food, grams: i.grams })) : [];
+    openSheet(el => {
+      const depth = stack.length;
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const name = textIn(m ? m.name : "", { placeholder: "Overnight oats", maxlength: "80" });
+      const portions = numIn(m ? r1(Number(m.portions) || 1) : 1, "1");
+      const cooked = numIn(m && m.total_g ? r1(Number(m.total_g)) : "", "optional");
+      const list = h("div", { style: "display:grid" }), sum = h("div", { style: "display:grid;gap:8px" });
+      const msg = h("div", { class: "msg", role: "status" });
+      const err = t => { msg.className = "msg err"; msg.textContent = t; };
+
+      function drawSum() {
+        const mi = mealInfo({ ings, portions: num(portions.value) });
+        sum.innerHTML = "";
+        sum.append(h("div", { class: "row wrap" }, h("h3", { text: "Per portion" }), h("span", { class: "small muted num", text: `Whole meal ${fmt(mi.tot.kcal)} kcal · ${fmt(mi.weight)} g raw` })),
+          nGrid(mi.scaled(1 / mi.portions)));
+        if (mi.fibreMissing) sum.append(h("div", { class: "small muted", text: `Fibre isn't listed for ${mi.fibreMissing} ingredient${mi.fibreMissing === 1 ? "" : "s"}, so the real fibre is higher.` }));
+      }
+      function drawList() {
+        list.innerHTML = "";
+        if (!ings.length) list.append(h("div", { class: "empty", style: "padding:4px 0", text: "No ingredients yet. Add each one with its weight." }));
+        ings.forEach((i, idx) => {
+          const sub = h("div", { class: "sub num" });
+          const setSub = () => { const n = per(i.food, n0(i.grams)); sub.textContent = `${fmt(n.kcal)} kcal · P ${r1(n.protein)} · Fibre ${n.fibre == null ? "–" : r1(n.fibre)}`; };
+          const g = numIn(r1(i.grams), "0"); g.setAttribute("aria-label", `Amount of ${i.food.name}`);
+          g.addEventListener("input", () => { i.grams = num(g.value) || 0; setSub(); drawSum(); });
+          setSub();
+          list.append(h("div", { class: "item ing" },
+            h("div", null, h("div", { class: "nm", text: i.food.name }), sub),
+            h("div", { class: "unitwrap" }, g, h("span", { class: "u", text: U(i.food) })),
+            h("button", { class: "del", type: "button", text: "✕", "aria-label": "Remove " + i.food.name, onclick: () => { ings.splice(idx, 1); drawList(); } })));
+        });
+        drawSum();
+      }
+      portions.addEventListener("input", drawSum);
+
+      const addIng = h("button", { class: "pill accent", type: "button", text: "+ Add ingredient", onclick: () => foodSheet(null, (food, grams) => {
+        ings.push({ food, grams });
+        while (stack.length > depth) closeSheet();
+        drawList(); toast(`Added ${food.name}`);
+      }) });
+
+      const save = h("button", { class: "btn", type: "button", text: "Save meal" });
+      save.addEventListener("click", async () => {
+        const nm = name.value.trim(), p = num(portions.value), cg = num(cooked.value);
+        const keep = ings.filter(i => i.grams > 0);
+        if (!nm) return err("Give the meal a name.");
+        if (!keep.length) return err("Add at least one ingredient with its weight.");
+        if (!(p > 0)) return err("Enter how many portions it makes.");
+        save.disabled = true;
+        try {
+          const row = { name: nm, portions: p, total_g: cg > 0 ? cg : null };
+          let id = m && m.id, r;
+          if (id) {
+            r = await sb.from("meals").update(row).eq("id", id); if (r.error) throw r.error;
+            r = await sb.from("meal_ingredients").delete().eq("meal_id", id); if (r.error) throw r.error;
+          } else {
+            r = await sb.from("meals").insert(row).select("id").single(); if (r.error) throw r.error;
+            id = r.data.id;
+          }
+          r = await sb.from("meal_ingredients").insert(keep.map(i => ({ meal_id: id, food_id: i.food.id, grams: r1(i.grams) })));
+          if (r.error) throw r.error;
+          closeSheet(); toast("Meal saved");
+          onSaved(Object.assign({ id }, row, { ings: keep }));
+        } catch (e) { err(errText(e)); save.disabled = false; }
+      });
+
+      let delArmed = false;
+      const del = m ? h("button", { class: "btn ghost", type: "button", style: "color:var(--err)", text: "Delete meal" }) : null;
+      if (del) del.addEventListener("click", async () => {
+        if (!delArmed) { delArmed = true; del.textContent = "Tap again to delete"; setTimeout(() => { delArmed = false; if (del.isConnected) del.textContent = "Delete meal"; }, 3000); return; }
+        del.disabled = true;
+        const { error } = await sb.from("meals").delete().eq("id", m.id);
+        if (error) { err(errText(error)); del.disabled = false; return; }
+        closeSheet(); toast("Meal deleted"); onSaved(null);
+      });
+
+      pg.append(sheetHead(m ? "Edit meal" : "Create meal", { left: ["Cancel", closeSheet] }),
+        h("section", { class: "card" }, field("Name", name),
+          h("div", { class: "grid2" }, field("Portions it makes", portions), field("Cooked weight (g)", cooked)),
+          h("div", { class: "tiny muted", text: "Cooked weight is optional. Weigh the finished dish and you can log it by grams too." })),
+        h("section", { class: "card" }, h("h2", { text: "Ingredients" }), list, h("div", { class: "acts" }, addIng)),
+        h("section", { class: "card" }, sum),
+        msg, save, del);
+      drawList();
+    });
+  }
+
   // ================= BARCODE =================
   function loadScript(src) {
     return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res(); const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s); });
   }
-  function scanSheet(meal) {
+  function scanSheet(meal, pick) {
     let stopFn = null, done = false;
     openSheet(async el => {
       const pg = h("div", { class: "page" }); el.append(pg);
@@ -719,8 +913,8 @@
           let f = mine && mine[0];
           if (!f) f = await offBarcode(code);
           closeSheet();
-          if (f) amountSheet(f, meal);
-          else { toast("Not in Open Food Facts yet. Enter it from the label."); createFoodSheet(meal, code); }
+          if (f) amountSheet(f, meal, pick);
+          else { toast("Not in Open Food Facts yet. Enter it from the label."); createFoodSheet(meal, code, pick); }
         } catch (e) { msg.className = "msg err"; msg.textContent = errText(e); done = false; }
       }
 
