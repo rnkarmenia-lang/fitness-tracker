@@ -256,7 +256,7 @@
       h("div", { class: "rings" },
         h("div", { html: ringSvg([budget ? kin / budget : 0, g ? prot / g.protein : 0, g ? fib / g.fibre : 0]) }),
         h("div", { class: "legend" },
-          h("div", null, h("div", { class: "k", text: "Calories" }), h("div", { class: "v num", style: "color:var(--kcal)", text: `${fmt(kin)} / ${g ? fmt(budget) : "–"}` })),
+          h("div", null, h("div", { class: "k", text: "Calories" }), h("div", { class: "v num", style: "color:var(--kcal)", text: `${fmt(kin)} / ${g ? fmt(budget) : "–"} kcal` })),
           h("div", null, h("div", { class: "k", text: "Protein" }), h("div", { class: "v num", style: "color:var(--prot)", text: `${fmt(prot)} / ${g ? g.protein : "–"} g` })),
           h("div", null, h("div", { class: "k", text: "Fibre" }), h("div", { class: "v num", style: "color:var(--fibre)", text: `${r1(fib)} / ${g ? g.fibre : 30} g` })))),
       g ? h("div", { class: "row budget num" }, h("span", { text: `Goal ${fmt(g.kcal)} + exercise ${fmt(ex)}` }), h("b", { style: `color:${left < 0 ? "var(--err)" : "var(--ink)"}`, text: left < 0 ? `${fmt(-left)} over` : `${fmt(left)} left` })) : null,
@@ -274,7 +274,7 @@
       items.forEach(e => card.append(h("div", { class: "item" },
         h("div", null, h("div", { class: "nm", text: e.name }),
           h("div", { class: "sub num", text: [e.amount_label, `P ${r1(n0(e.protein))} · C ${r1(n0(e.carbs))} · F ${r1(n0(e.fat))} · Fibre ${e.fibre == null ? "–" : r1(e.fibre)}`].filter(Boolean).join(" · ") })),
-        h("div", { class: "kc num", text: fmt(e.kcal) }),
+        h("div", { class: "kc num" }, fmt(e.kcal), h("small", { text: "kcal" })),
         armDelete(h("button", { class: "del", text: "✕", "aria-label": "Delete " + e.name }), async () => {
           const { error } = await sb.from("diary_entries").delete().eq("id", e.id);
           if (error) return toast(errText(error));
@@ -435,7 +435,10 @@
   }
 
   // ================= FOOD SEARCH =================
-  const offFields = "code,product_name,product_name_en,brands,nutriments,serving_size,serving_quantity";
+  const offFields = "code,product_name,product_name_en,brands,nutriments,serving_size,serving_quantity,quantity,product_quantity,product_quantity_unit";
+  const LIQUID_RE = /\d\s*(ml|cl|dl|l|litre|liter)\b/i;
+  const USDA_LIQUID_RE = /\b(milk|juice|beverage|drink|water|soda|cola|wine|beer|coffee|tea|smoothie|kefir|nectar|lemonade|broth)\b/i;
+  const U = f => (f && f.unit === "ml") ? "ml" : "g";
   function fromOff(p) {
     if (!p) return null;
     const n = p.nutriments || {};
@@ -443,7 +446,9 @@
     if (kcal == null && n.energy_100g != null) kcal = n.energy_100g / 4.184;
     const name = (p.product_name_en || p.product_name || "").trim();
     if (!name || kcal == null) return null;
+    const liquid = /^(ml|cl|dl|l)$/i.test(String(p.product_quantity_unit || "")) || LIQUID_RE.test(p.quantity || "") || LIQUID_RE.test(p.serving_size || "");
     return { source: "off", source_id: String(p.code), barcode: String(p.code), name, brand: (Array.isArray(p.brands) ? p.brands[0] || "" : String(p.brands || "").split(",")[0]).trim() || null,
+      unit: liquid ? "ml" : "g", pack_g: num(p.product_quantity) || null, pack_name: p.quantity || null,
       serving_name: p.serving_size || null, serving_g: num(p.serving_quantity),
       kcal: num(kcal), protein: num(n.proteins_100g), carbs: num(n.carbohydrates_100g), fat: num(n.fat_100g),
       fibre: num(n.fiber_100g), sugar: num(n.sugars_100g), sat_fat: num(n["saturated-fat_100g"]),
@@ -471,7 +476,8 @@
       const kcal = v("208") ?? v("957") ?? v("958");
       if (kcal == null) return null;
       const name = f.description.charAt(0) + f.description.slice(1).toLowerCase();
-      return { source: "usda", source_id: String(f.fdcId), barcode: null, name, brand: null, serving_name: null, serving_g: null,
+      const liquid = USDA_LIQUID_RE.test(f.description) && !/\b(powder|dry|dried|instant)\b/i.test(f.description);
+      return { source: "usda", source_id: String(f.fdcId), barcode: null, name, brand: null, serving_name: null, serving_g: null, unit: liquid ? "ml" : "g", pack_g: null, pack_name: null,
         kcal, protein: v("203"), carbs: v("205"), fat: v("204"), fibre: v("291"), sugar: v("269"), sat_fat: v("606"), sodium_mg: v("307") };
     }).filter(Boolean);
   }
@@ -499,8 +505,8 @@
 
       const row = f => h("button", { type: "button", onclick: () => amountSheet(f, meal) },
         h("div", null, h("div", { class: "nm", text: f.name }),
-          h("div", { class: "sub", text: [f.brand, SRC[f.source], f.serving_g ? `serving ${r1(f.serving_g)} g` : "per 100 g", f.fibre == null ? "fibre not listed" : `fibre ${r1(f.fibre)} g/100 g`].filter(Boolean).join(" · ") })),
-        h("div", { class: "kc num", text: `${fmt(f.kcal)}` }));
+          h("div", { class: "sub", text: [f.brand, SRC[f.source], `per 100 ${U(f)}`, f.fibre == null ? "fibre not listed" : `fibre ${r1(f.fibre)} g`].filter(Boolean).join(" · ") })),
+        h("div", { class: "kc num" }, fmt(f.kcal), h("small", { text: "kcal" })));
       const block = (label, list, note) => {
         const b = h("div", { class: "res" }, h("div", { class: "lbl", text: label }));
         if (note) b.append(h("div", { class: "empty", style: "padding:6px 0 12px", text: note }));
@@ -519,7 +525,7 @@
         const { data: mine } = await local;
         if (!term) {
           results.append(block(filter === "mine" ? "My foods" : "Recent", mine || [], (mine || []).length ? null : (filter === "mine" ? "Foods you create appear here." : "Foods you log appear here for one-tap adding.")));
-          results.append(h("div", { class: "small muted", style: "text-align:center", text: "Calories are per 100 g unless a serving is shown." }));
+          results.append(h("div", { class: "small muted", style: "text-align:center", text: "Calories shown per 100 g, or per 100 ml for drinks." }));
           return;
         }
         if ((mine || []).length) results.append(block("Your foods", mine));
@@ -539,25 +545,49 @@
     });
   }
 
-  function amountSheet(f, meal) {
+  async function enrichOff(f) {
+    // Search results don't always carry the pack size; the barcode endpoint does (and allows browser calls).
+    if (f.source !== "off" || !f.barcode || f.pack_g != null) return f;
+    try {
+      const full = await offBarcode(f.barcode);
+      if (!full) return f;
+      const merged = Object.assign({}, f, { unit: full.unit, pack_g: full.pack_g, pack_name: full.pack_name, serving_g: f.serving_g || full.serving_g, serving_name: f.serving_name || full.serving_name });
+      if (f.id) await sb.from("foods").update({ unit: merged.unit, pack_g: merged.pack_g, pack_name: merged.pack_name }).eq("id", f.id);
+      return merged;
+    } catch (_) { return f; }
+  }
+
+  async function amountSheet(f0, meal) {
+    const f = await enrichOff(f0);
+    const base = U(f);
     const hasServing = f.serving_g && f.serving_g > 0;
-    let unit = hasServing ? "serving" : "g";
+    const hasPack = f.pack_g && f.pack_g > 0;
+    let unit = hasServing ? "serving" : "base";
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
       pg.append(sheetHead("Amount", { left: ["‹ Back", closeSheet] }));
       const qIn = numIn(hasServing ? 1 : 100, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
+      const uLbl = h("span", { class: "u" });
       const grid = h("div"), extra = h("div", { class: "small muted num" });
-      const grams = () => unit === "serving" ? (num(qIn.value) || 0) * f.serving_g : (num(qIn.value) || 0);
+      const size = () => unit === "serving" ? f.serving_g : unit === "pack" ? f.pack_g : 1;
+      const grams = () => (num(qIn.value) || 0) * size();
+      const unitText = () => unit === "serving" ? "serving" : unit === "pack" ? "pack" : base;
       const draw = () => {
         const n = per(f, grams());
+        uLbl.textContent = unitText();
         grid.innerHTML = "";
-        grid.append(h("div", { class: "ngrid num" }, ...[["kcal", fmt(n.kcal), "var(--kcal)"], ["Protein", r1(n.protein), "var(--prot)"], ["Carbs", r1(n.carbs)], ["Fat", r1(n.fat)], ["Fibre", n.fibre == null ? "–" : r1(n.fibre), "var(--fibre)"]]
-          .map(([k, v, c]) => h("div", null, h("span", { class: "v", style: c ? `color:${c}` : "", text: v }), h("span", { class: "k", text: k === "kcal" ? "kcal" : k + " g" })))));
-        extra.textContent = [`${r1(grams())} g`, n.sugar != null ? `sugar ${r1(n.sugar)} g` : null, n.sat_fat != null ? `sat fat ${r1(n.sat_fat)} g` : null, n.sodium_mg != null ? `sodium ${fmt(n.sodium_mg)} mg` : null].filter(Boolean).join(" · ");
+        grid.append(h("div", { class: "ngrid num" }, ...[["kcal", fmt(n.kcal), "kcal", "var(--kcal)"], ["Protein", r1(n.protein), "g", "var(--prot)"], ["Carbs", r1(n.carbs), "g"], ["Fat", r1(n.fat), "g"], ["Fibre", n.fibre == null ? "–" : r1(n.fibre), n.fibre == null ? "" : "g", "var(--fibre)"]]
+          .map(([k, v, u, c]) => h("div", null, h("span", { class: "v", style: c ? `color:${c}` : "" }, v, u ? h("small", { text: u }) : null), h("span", { class: "k", text: k })))));
+        extra.textContent = [`${r1(grams())} ${base}`, n.sugar != null ? `sugar ${r1(n.sugar)} g` : null, n.sat_fat != null ? `sat fat ${r1(n.sat_fat)} g` : null, n.sodium_mg != null ? `sodium ${fmt(n.sodium_mg)} mg` : null].filter(Boolean).join(" · ");
       };
       qIn.addEventListener("input", draw);
       const step = d => { const v = Math.max(0, r1((num(qIn.value) || 0) + d)); qIn.value = v; draw(); };
-      const stepSize = () => unit === "serving" ? 0.5 : 10;
+      const stepSize = () => unit === "base" ? 10 : unit === "pack" ? 0.25 : 0.5;
+      const units = [];
+      if (hasServing) units.push(["serving", `Serving (${r1(f.serving_g)} ${base})`]);
+      if (hasPack) units.push(["pack", `Pack (${r1(f.pack_g)} ${base})`]);
+      units.push(["base", base === "ml" ? "Millilitres" : "Grams"]);
+      const unitSeg = units.length > 1 ? seg(units, unit, v => { const g = grams(); unit = v; qIn.value = r1(g / size()); draw(); }) : null;
       const msg = h("div", { class: "msg", role: "status" });
       const add = h("button", { class: "btn", type: "button", text: "Add to diary" });
       add.addEventListener("click", async () => {
@@ -575,7 +605,9 @@
             await sb.from("foods").update({ last_used: now }).eq("id", foodId);
           }
           const n = per(f, g);
-          const label = unit === "serving" ? `${r1(num(qIn.value))} × ${f.serving_name || "serving"} (${r1(g)} g)` : `${r1(g)} g`;
+          const q = r1(num(qIn.value));
+          const label = unit === "serving" ? `${q} × ${f.serving_name || "serving"} (${r1(g)} ${base})`
+            : unit === "pack" ? `${q} × pack${f.pack_name ? " " + f.pack_name : ""} (${r1(g)} ${base})` : `${r1(g)} ${base}`;
           const { error } = await sb.from("diary_entries").insert({ date: S.day, meal, food_id: foodId, name: f.brand ? `${f.name} (${f.brand})` : f.name, amount_label: label, grams: r1(g),
             kcal: r1(n.kcal), protein: r1(n.protein), carbs: r1(n.carbs), fat: r1(n.fat), fibre: n.fibre == null ? null : r1(n.fibre),
             sugar: n.sugar == null ? null : r1(n.sugar), sat_fat: n.sat_fat == null ? null : r1(n.sat_fat), sodium_mg: n.sodium_mg == null ? null : Math.round(n.sodium_mg), source: f.source });
@@ -586,9 +618,8 @@
       pg.append(
         h("section", { class: "card" },
           h("div", null, h("h2", { text: f.name }), h("div", { class: "small muted", text: [f.brand, SRC[f.source], f.fibre == null ? "fibre not listed by this source" : null].filter(Boolean).join(" · ") })),
-          hasServing ? seg([["serving", `Servings (${r1(f.serving_g)} g)`], ["g", "Grams"]], unit, v => {
-            const g = grams(); unit = v; qIn.value = v === "serving" ? r1(g / f.serving_g) : r1(g); draw(); }) : null,
-          h("div", { class: "stepper" }, h("button", { type: "button", text: "−", "aria-label": "Less", onclick: () => step(-stepSize()) }), qIn,
+          unitSeg,
+          h("div", { class: "stepper" }, h("button", { type: "button", text: "−", "aria-label": "Less", onclick: () => step(-stepSize()) }), h("div", { class: "unitwrap" }, qIn, uLbl),
             h("button", { type: "button", text: "+", "aria-label": "More", onclick: () => step(stepSize()) })),
           grid, extra),
         h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
@@ -622,13 +653,14 @@
   }
 
   function createFoodSheet(meal, barcode) {
-    let basis = "serving";
+    let basis = "serving", fu = "g";
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
       const name = textIn("", { placeholder: "Halloumi", maxlength: "80" });
       const brand = textIn("", { placeholder: "optional", maxlength: "60" });
       const sname = textIn("", { placeholder: "1 slice", maxlength: "40" });
       const sg = numIn("", "30");
+      const pk = numIn("", "optional");
       const bc = textIn(barcode || "", { inputmode: "numeric", placeholder: "optional" });
       const inp = { kcal: numIn("", "0", "numeric"), protein: numIn("", "0"), carbs: numIn("", "0"), fat: numIn("", "0"), fibre: numIn("", "0"), sugar: numIn("", "optional"), sat_fat: numIn("", "optional"), sodium_mg: numIn("", "optional", "numeric") };
       const msg = h("div", { class: "msg", role: "status" });
@@ -636,12 +668,13 @@
       save.addEventListener("click", async () => {
         const g = num(sg.value);
         if (!name.value.trim()) { msg.className = "msg err"; msg.textContent = "Give the food a name."; return; }
-        if (basis === "serving" && !(g > 0)) { msg.className = "msg err"; msg.textContent = "Enter the serving size in grams (it's on the label)."; return; }
+        if (basis === "serving" && !(g > 0)) { msg.className = "msg err"; msg.textContent = `Enter the serving size in ${fu} (it's on the label).`; return; }
         if (num(inp.kcal.value) == null) { msg.className = "msg err"; msg.textContent = "Enter the calories."; return; }
         const factor = basis === "serving" ? 100 / g : 1;
         const val = k => { const v = num(inp[k].value); return v == null ? null : Math.round(v * factor * 100) / 100; };
         const row = { user_id: S.user.id, source: "mine", source_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), barcode: bc.value.trim() || null,
-          name: name.value.trim(), brand: brand.value.trim() || null, serving_name: sname.value.trim() || (g ? `${r1(g)} g` : null), serving_g: g || null,
+          name: name.value.trim(), brand: brand.value.trim() || null, serving_name: sname.value.trim() || (g ? `${r1(g)} ${fu}` : null), serving_g: g || null,
+          unit: fu, pack_g: num(pk.value) || null, pack_name: num(pk.value) ? `${r1(num(pk.value))} ${fu}` : null,
           kcal: val("kcal"), protein: val("protein") || 0, carbs: val("carbs") || 0, fat: val("fat") || 0, fibre: val("fibre"), sugar: val("sugar"), sat_fat: val("sat_fat"), sodium_mg: val("sodium_mg") };
         save.disabled = true;
         const { data, error } = await sb.from("foods").insert(row).select("*").single();
@@ -650,9 +683,11 @@
       });
       pg.append(sheetHead("Create food", { left: ["‹ Back", closeSheet] }),
         h("section", { class: "card" }, field("Name", name), field("Brand", brand),
-          h("div", { class: "grid2" }, field("Serving name", sname), field("Serving size (g)", sg)), field("Barcode", bc)),
+          field("Measured in", seg([["g", "Grams (food)"], ["ml", "Millilitres (drink)"]], fu, v => fu = v)),
+          h("div", { class: "grid2" }, field("Serving name", sname), field("Serving size (g or ml)", sg)),
+          h("div", { class: "grid2" }, field("Pack size (g or ml)", pk), field("Barcode", bc))),
         h("section", { class: "card" }, h("h2", { text: "Nutrition from the label" }),
-          seg([["serving", "Per serving"], ["100", "Per 100 g"]], basis, v => basis = v),
+          seg([["serving", "Per serving"], ["100", "Per 100 g / ml"]], basis, v => basis = v),
           h("div", { class: "grid2" }, field("Calories (kcal)", inp.kcal), field("Protein (g)", inp.protein)),
           h("div", { class: "grid3" }, field("Carbs (g)", inp.carbs), field("Fat (g)", inp.fat), field("Fibre (g)", inp.fibre)),
           h("div", { class: "grid3" }, field("Sugar (g)", inp.sugar), field("Sat. fat (g)", inp.sat_fat), field("Sodium (mg)", inp.sodium_mg))),

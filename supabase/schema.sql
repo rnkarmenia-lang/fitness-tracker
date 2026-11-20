@@ -181,6 +181,11 @@ select id, coalesce(nullif(raw_user_meta_data->>'username',''), split_part(email
 from auth.users
 on conflict (user_id) do nothing;
 
+-- ---------- Added after phase 2: liquids (ml) and pack sizes ----------
+alter table public.foods add column if not exists unit text default 'g';
+alter table public.foods add column if not exists pack_g numeric;
+alter table public.foods add column if not exists pack_name text;
+
 -- ---------- Sign in with username: returns the email for a username ----------
 create or replace function public.email_for_username(p_username text) returns text
 language sql security definer set search_path = public stable as $$

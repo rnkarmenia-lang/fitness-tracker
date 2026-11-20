@@ -67,7 +67,7 @@ h3 { font-size: 15px; margin: 0; font-weight: 600; }
 .del.armed { background: var(--err); color: #fff; font-size: 11px; font-weight: 600; }
 .acts { display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 10px; }
 .pill { min-height: 38px; padding: 0 14px; border-radius: 19px; background: var(--seg); font-weight: 600; font-size: 14px; }
-.pill.accent { background: #ffe1e9; color: #b10a39; }
+.pill.accent { background: #d8f2c8; color: #23700f; }
 .empty { color: var(--muted); font-size: 14px; }
 
 /* ---------- Tabs ---------- */
@@ -86,7 +86,7 @@ label.f { display: grid; gap: 5px; font-size: 13px; color: var(--muted); min-wid
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--seg); border-radius: 11px; padding: 2px; gap: 2px; }
 .seg button { min-height: 38px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--muted); padding: 0 4px; }
 .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(11,31,51,.12); }
-.btn { min-height: 50px; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; width: 100%; }
+.btn { min-height: 50px; border-radius: 14px; background: #1e7fd8; color: #ffffff; font-weight: 600; width: 100%; }
 .btn.ghost { background: var(--seg); color: var(--ink); }
 .btn:disabled { opacity: .5; }
 .link { color: #0b6fb8; font-weight: 600; font-size: 14px; padding: 8px 0; }
@@ -121,6 +121,11 @@ label.f { display: grid; gap: 5px; font-size: 13px; color: var(--muted); min-wid
 .stepper { display: grid; grid-template-columns: 48px minmax(0,1fr) 48px; gap: 8px; }
 .stepper button { height: 48px; border-radius: 12px; background: var(--card); border: 1px solid var(--line-strong); font-size: 22px; }
 .stepper input { text-align: center; font-weight: 600; }
+.unitwrap { position: relative; min-width: 0; }
+.unitwrap input { padding-right: 52px; padding-left: 52px; }
+.unitwrap .u { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; pointer-events: none; }
+.ngrid .v small { font-size: 12px; font-weight: 600; margin-left: 2px; }
+.item .kc small, .res .kc small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
 .video { width: 100%; aspect-ratio: 3/4; background: #0b1f33; border-radius: 16px; object-fit: cover; }
 
 /* ---------- Calendar ---------- */
