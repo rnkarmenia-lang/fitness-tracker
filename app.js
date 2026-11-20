@@ -557,14 +557,23 @@
         }
         if ((mine || []).length) results.append(block("Your foods", mine));
         if (filter !== "all") return;
-        const offB = block("Open Food Facts", [], "Searching…"), usdaB = block("USDA", [], "Searching…");
-        results.append(offB, usdaB);
+        // One mixed list: USDA results first, then Open Food Facts. Redrawn as each source answers.
+        let dbB = block("Food database", [], "Searching…");
+        results.append(dbB);
+        const got = { usda: null, off: null };
+        const paint = () => {
+          const list = [...(got.usda || []), ...(got.off || [])];
+          const waiting = got.usda == null || got.off == null;
+          const failed = [got.usda === false ? "USDA" : null, got.off === false ? "Open Food Facts" : null].filter(Boolean);
+          const note = failed.length ? `Couldn't reach ${failed.join(" or ")}. Try again.` : !list.length ? (waiting ? "Searching…" : "No matches.") : null;
+          const nb = block("Food database", list, note);
+          if (waiting && list.length) nb.append(h("div", { class: "empty", style: "padding:6px 0 12px", text: "Loading more…" }));
+          dbB.replaceWith(nb); dbB = nb;
+        };
         ctrl = new AbortController(); const sig = ctrl.signal;
         timer = setTimeout(() => {
-          searchOff(term, sig).then(l => { offB.replaceWith(block("Open Food Facts", l, l.length ? null : "No matches.")); })
-            .catch(e => { if (e.name !== "AbortError") offB.replaceWith(block("Open Food Facts", [], "Couldn't reach Open Food Facts. Try again.")); });
-          searchUsda(term, sig).then(l => { usdaB.replaceWith(block("USDA", l, l.length ? null : "No matches.")); })
-            .catch(e => { if (e.name !== "AbortError") usdaB.replaceWith(block("USDA", [], "Couldn't reach USDA. Try again.")); });
+          searchUsda(term, sig).then(l => { got.usda = l; paint(); }).catch(e => { if (e.name !== "AbortError") { got.usda = false; paint(); } });
+          searchOff(term, sig).then(l => { got.off = l; paint(); }).catch(e => { if (e.name !== "AbortError") { got.off = false; paint(); } });
         }, 350);
       }
       search.addEventListener("input", () => { q = search.value; clearTimeout(draw.t); draw.t = setTimeout(draw, 250); });
