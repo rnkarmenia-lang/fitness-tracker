@@ -130,6 +130,12 @@ label.f { display: grid; gap: 5px; font-size: 13px; color: var(--muted); min-wid
 .ing .unitwrap .u { right: 10px; font-size: 14px; }
 .ngrid .v small { font-size: 12px; font-weight: 600; margin-left: 2px; }
 .item .kc small, .res .kc small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.big { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.big small { font-size: 16px; font-weight: 600; color: var(--muted); }
+.bar { height: 12px; border-radius: 6px; background: #d6e8f8; overflow: hidden; }
+.bar span { display: block; height: 100%; border-radius: 6px; background: #1e7fd8; }
+.code { display: block; min-height: 48px; padding: 8px 12px; border-radius: 12px; background: var(--field); border: 1px solid var(--line-strong);
+  font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
 .video { width: 100%; aspect-ratio: 3/4; background: #0b1f33; border-radius: 16px; object-fit: cover; }
 
 /* ---------- Calendar ---------- */

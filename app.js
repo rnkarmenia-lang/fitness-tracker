@@ -204,14 +204,16 @@
   }
   async function loadDay() {
     const y = iso(addDays(parse(S.day), -1));
-    const [{ data: e, error: e1 }, { data: wk, error: e2 }] = await Promise.all([
+    const [{ data: e, error: e1 }, { data: wk, error: e2 }, { data: act }] = await Promise.all([
       sb.from("diary_entries").select("*").in("date", [S.day, y]).order("created_at"),
-      sb.from("workouts").select("kcal,minutes,type").eq("date", S.day)
+      sb.from("workouts").select("*").eq("date", S.day).order("created_at"),
+      sb.from("daily_activity").select("*").eq("date", S.day).maybeSingle()
     ]);
     if (e1) throw e1; if (e2) throw e2;
     S.entries = (e || []).filter(x => x.date === S.day);
     S.yEntries = (e || []).filter(x => x.date === y);
     S.workouts = wk || [];
+    S.activity = act || null;
   }
 
   // ================= main shell =================
@@ -228,8 +230,9 @@
     const view = h("div", { id: "view", style: "display:grid;gap:12px" });
     root.append(h("main", { class: "page" }, top, view), tabs());
     if (S.tab === "diary") renderDiary(view);
-    else view.append(h("div", { class: "card" }, h("h2", { text: S.tab === "activity" ? "Activity" : "Weight" }),
-      h("p", { class: "muted", style: "margin:0", text: S.tab === "activity" ? "Workouts and Watch steps arrive in phase 4." : "Weigh-ins, trend and photos arrive in phase 5. Your current weight is kept in Profile for now." })));
+    else if (S.tab === "activity") renderActivity(view);
+    else view.append(h("div", { class: "card" }, h("h2", { text: "Weight" }),
+      h("p", { class: "muted", style: "margin:0", text: "Weigh-ins, trend and photos arrive in phase 5. Your current weight is kept in Profile for now." })));
   }
   function tabs() {
     const b = (id, label) => h("button", { "aria-current": S.tab === id ? "page" : null, html: ICON[id] + `<span>${label}</span>`, onclick: () => { S.tab = id; renderMain(); window.scrollTo(0, 0); } });
@@ -300,6 +303,200 @@
     if (error) return toast(errText(error));
     toast(`Added ${rows.length} item${rows.length > 1 ? "s" : ""}`);
     await refresh();
+  }
+
+  // ================= ACTIVITY =================
+  // Workout calories = (MET − 1) × kg × hours (the "− 1" leaves out what you'd burn at rest anyway).
+  const WORKOUTS = [["run", "Run", 9.8], ["cycling", "Cycling", 7.5], ["walk", "Walk", 3.5], ["functional", "Functional", 8.0],
+    ["weights", "Heavy weights", 6.0], ["swim", "Swim", 7.0], ["other", "Other", 4.0]];
+  const WT = Object.fromEntries(WORKOUTS.map(w => [w[0], w]));
+  const metKcal = (type, minutes, kg) => (kg && minutes > 0) ? Math.round(((WT[type] || WT.other)[2] - 1) * kg * minutes / 60) : 0;
+  const hhmm = ts => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+  function stepsChart(days, vals, goal) {
+    const W = 320, H = 150, top = 12, bottom = 22, n = days.length;
+    const max = Math.max(goal, ...vals.map(v => v || 0)) * 1.08;
+    const y = v => top + (H - top - bottom) * (1 - v / max);
+    const bw = (W / n) * (n > 10 ? 0.7 : 0.6), gx = i => (W / n) * (i + 0.5);
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Steps per day, goal ${fmt(goal)}">`;
+    s += `<line x1="0" x2="${W}" y1="${y(goal).toFixed(1)}" y2="${y(goal).toFixed(1)}" stroke="var(--prot)" stroke-dasharray="4 4" stroke-width="1.5"/>`;
+    s += `<text x="${W}" y="${(y(goal) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--prot)">goal ${fmt(goal)}</text>`;
+    vals.forEach((v, i) => {
+      if (v) { const yy = y(v); s += `<rect x="${(gx(i) - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - bottom - yy).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}" fill="${v >= goal ? "#1e7fd8" : "#8cc1ef"}"><title>${days[i]}: ${fmt(v)} steps</title></rect>`; }
+      const d = parse(days[i]);
+      const lab = n <= 10 ? d.toLocaleDateString("en-GB", { weekday: "narrow" }) : (i % 7 === 0 || i === n - 1 ? String(d.getDate()) : "");
+      if (lab) s += `<text x="${gx(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">${lab}</text>`;
+    });
+    return h("div", { html: s + "</svg>" });
+  }
+
+  function renderActivity(view) {
+    const goal = Number(S.profile && S.profile.step_goal) || 10000;
+    const a = S.activity || {};
+    const steps = a.steps != null ? Number(a.steps) : null;
+    const exK = S.workouts.reduce((s, w) => s + n0(w.kcal), 0), exM = S.workouts.reduce((s, w) => s + n0(w.minutes), 0);
+
+    view.append(h("section", { class: "card" },
+      h("div", { class: "row" }, h("h2", { text: "Steps" }), h("button", { class: "link", text: steps == null ? "Enter steps" : "Edit", onclick: stepsSheet })),
+      h("div", { class: "big num" }, steps == null ? "–" : fmt(steps), h("small", { text: ` / ${fmt(goal)}` })),
+      h("div", { class: "bar", role: "img", "aria-label": `${steps == null ? 0 : Math.round(steps / goal * 100)}% of step goal` }, h("span", { style: `width:${steps ? Math.min(100, steps / goal * 100) : 0}%` })),
+      h("div", { class: "small muted num", text: [a.km != null ? `${r1(Number(a.km))} km` : null, a.synced_at ? `updated ${hhmm(a.synced_at)}` : "No Watch data for this day yet"].filter(Boolean).join(" · ") })));
+
+    const wc = h("section", { class: "card" },
+      h("div", { class: "row" }, h("h2", { text: "Workouts" }), h("span", { class: "small muted num", text: `${exM} min · ${fmt(exK)} kcal` })));
+    if (!S.workouts.length) wc.append(h("div", { class: "empty", text: "No workouts on this day." }));
+    S.workouts.forEach(w => wc.append(h("div", { class: "item" },
+      h("button", { type: "button", style: "text-align:left", onclick: () => workoutSheet(w) },
+        h("div", { class: "nm", text: (WT[w.type] || WT.other)[1] }), h("div", { class: "sub num", text: [`${w.minutes} min`, w.notes].filter(Boolean).join(" · ") })),
+      h("div", { class: "kc num" }, fmt(w.kcal), h("small", { text: "kcal" })),
+      armDelete(h("button", { class: "del", text: "✕", "aria-label": "Delete workout" }), async () => {
+        const { error } = await sb.from("workouts").delete().eq("id", w.id);
+        if (error) return toast(errText(error));
+        await refresh();
+      }))));
+    wc.append(h("div", { class: "acts" }, h("button", { class: "pill accent", text: "+ Add workout", onclick: () => workoutSheet(null) })),
+      h("div", { class: "tiny muted", text: "Workout calories are added to your food budget in the Diary. Steps don't add calories." }));
+    view.append(wc);
+
+    const body = h("div", { style: "display:grid;gap:10px" });
+    const range = S.actRange || 7;
+    view.append(h("section", { class: "card" }, h("h2", { text: "Trend" }),
+      seg([[7, "Week"], [30, "Month"]], range, v => { S.actRange = Number(v); drawTrend(); }), body));
+    async function drawTrend() {
+      const n = S.actRange || 7, end = S.day, start = iso(addDays(parse(end), -(n - 1)));
+      body.innerHTML = ""; body.append(h("div", { class: "small muted", text: "Loading…" }));
+      const [{ data: da, error: e1 }, { data: wk, error: e2 }] = await Promise.all([
+        sb.from("daily_activity").select("date,steps,km").gte("date", start).lte("date", end),
+        sb.from("workouts").select("date,minutes,kcal").gte("date", start).lte("date", end)]);
+      body.innerHTML = "";
+      if (e1 || e2) { body.append(h("div", { class: "msg err", text: errText(e1 || e2) })); return; }
+      const days = Array.from({ length: n }, (_, i) => iso(addDays(parse(start), i)));
+      const map = Object.fromEntries((da || []).map(x => [x.date, x]));
+      const vals = days.map(d => map[d] && map[d].steps != null ? Number(map[d].steps) : null);
+      const have = vals.filter(v => v != null);
+      const avg = have.length ? have.reduce((s, v) => s + v, 0) / have.length : null;
+      const km = (da || []).reduce((s, x) => s + n0(x.km), 0);
+      const hit = have.filter(v => v >= goal).length;
+      const stat = (k, v, u) => h("div", null, h("span", { class: "v" }, v, u ? h("small", { text: u }) : null), h("span", { class: "k", text: k }));
+      body.append(stepsChart(days, vals, goal),
+        h("div", { class: "ngrid num", style: "grid-template-columns:repeat(4,minmax(0,1fr))" },
+          stat("Avg steps", avg == null ? "–" : fmt(avg)), stat("Distance", r1(km), "km"),
+          stat("Workouts", String((wk || []).length)), stat("Exercise", fmt((wk || []).reduce((s, w) => s + n0(w.kcal), 0)), "kcal")),
+        h("div", { class: "small muted num", text: `Step goal reached on ${hit} of ${n} days · ${fmt((wk || []).reduce((s, w) => s + n0(w.minutes), 0))} workout minutes` }));
+    }
+    drawTrend();
+
+    view.append(h("section", { class: "card" },
+      h("div", { class: "row" }, h("div", null, h("h2", { text: "Apple Watch sync" }),
+        h("div", { class: "small muted", text: S.profile && S.profile.sync_token ? "Set up. Steps arrive each evening from your Shortcut." : "Send steps and km here automatically every evening." })),
+        h("button", { class: "pill", text: "Set up", onclick: watchSheet }))));
+  }
+
+  function workoutSheet(w) {
+    let type = w ? w.type : "run";
+    const kg = weightOn(w ? w.date : S.day);
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const mins = clearOnFocus(numIn(w ? w.minutes : 30, "30", "numeric"));
+      const manual = !!w && w.kcal !== metKcal(w.type, w.minutes, kg);
+      const kc = numIn(manual ? w.kcal : "", "", "numeric");
+      const notes = textIn(w ? w.notes || "" : "", { placeholder: "optional, e.g. 5 km easy", maxlength: "80" });
+      const est = h("div", { class: "small muted num" });
+      const msg = h("div", { class: "msg", role: "status" });
+      const draw = () => {
+        const e = metKcal(type, num(mins.value) || 0, kg);
+        kc.placeholder = String(e);
+        est.textContent = kg ? `Estimate ${fmt(e)} kcal: ${(WT[type] || WT.other)[1]} (MET ${(WT[type] || WT.other)[2]}) at ${r1(kg)} kg. Type your Watch's number below to use it instead.` : "Add your weight in Profile to estimate calories.";
+      };
+      mins.addEventListener("input", draw);
+      const types = h("div", { class: "chips", role: "group", "aria-label": "Workout type" });
+      const drawTypes = () => { types.innerHTML = ""; WORKOUTS.forEach(([k, l]) => types.append(h("button", { type: "button", class: "pill", "aria-pressed": String(k === type), style: k === type ? "background:#1e7fd8;color:#fff" : "", text: l, onclick: () => { type = k; drawTypes(); draw(); } }))); };
+      const quick = h("div", { class: "chips" }, ...[15, 30, 45, 60, 90].map(m => h("button", { type: "button", class: "pill", text: `${m} min`, onclick: () => { mins.value = m; draw(); } })));
+      const save = h("button", { class: "btn", type: "button", text: w ? "Save workout" : "Add workout" });
+      save.addEventListener("click", async () => {
+        const m = Math.round(num(mins.value) || 0);
+        if (!(m > 0)) { msg.className = "msg err"; msg.textContent = "Enter how many minutes."; return; }
+        const k = num(kc.value);
+        const row = { type, minutes: m, kcal: k != null ? Math.round(k) : metKcal(type, m, kg), notes: notes.value.trim() || null };
+        save.disabled = true;
+        const { error } = w ? await sb.from("workouts").update(row).eq("id", w.id) : await sb.from("workouts").insert(Object.assign({ date: S.day }, row));
+        if (error) { msg.className = "msg err"; msg.textContent = errText(error); save.disabled = false; return; }
+        closeSheet(); toast(w ? "Workout saved" : "Workout added"); await refresh();
+      });
+      pg.append(sheetHead(w ? "Edit workout" : "Add workout", { left: ["‹ Back", closeSheet] }),
+        h("section", { class: "card" }, h("h3", { text: "Type" }), types),
+        h("section", { class: "card" }, field("Duration (minutes)", mins), quick, est,
+          field("Calories (optional, from your Watch)", kc), field("Notes", notes)),
+        msg, save);
+      drawTypes(); draw();
+    });
+  }
+
+  function stepsSheet() {
+    const a = S.activity || {};
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const st = numIn(a.steps != null ? a.steps : "", "8000", "numeric"), km = numIn(a.km != null ? r1(Number(a.km)) : "", "6.0");
+      const msg = h("div", { class: "msg", role: "status" });
+      const save = h("button", { class: "btn", type: "button", text: "Save" });
+      save.addEventListener("click", async () => {
+        const s = num(st.value);
+        if (s == null || s < 0) { msg.className = "msg err"; msg.textContent = "Enter your steps."; return; }
+        save.disabled = true;
+        const { error } = await sb.from("daily_activity").upsert({ user_id: S.user.id, date: S.day, steps: Math.round(s), km: num(km.value), synced_at: new Date().toISOString() }, { onConflict: "user_id,date" });
+        if (error) { msg.className = "msg err"; msg.textContent = errText(error); save.disabled = false; return; }
+        closeSheet(); toast("Steps saved"); await refresh();
+      });
+      pg.append(sheetHead("Steps", { left: ["‹ Back", closeSheet] }),
+        h("section", { class: "card" }, h("div", { class: "grid2" }, field("Steps", st), field("Distance (km)", km)),
+          h("div", { class: "tiny muted", text: "Your Watch Shortcut overwrites this when it next runs for this day." })),
+        msg, save);
+    });
+  }
+
+  function watchSheet() {
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const url = `${CFG.supabaseUrl}/rest/v1/rpc/sync_activity`;
+      const box = h("div", { style: "display:grid;gap:10px" });
+      const copyRow = (label, value) => h("div", { style: "display:grid;gap:4px" }, h("div", { class: "small muted", text: label }),
+        h("div", { class: "searchrow" }, h("code", { class: "code", text: value }),
+          h("button", { class: "scanbtn", type: "button", "aria-label": "Copy " + label, text: "Copy", style: "font-size:13px;font-weight:600", onclick: async () => {
+            try { await navigator.clipboard.writeText(value); toast(label + " copied"); } catch (_) { toast("Couldn't copy. Press and hold the text instead."); } } })));
+      const draw = () => {
+        const t = S.profile.sync_token;
+        box.innerHTML = "";
+        if (!t) { box.append(h("div", { class: "small muted", text: "First create your private sync token. It lets your Shortcut write steps into your account and nothing else." })); return; }
+        box.append(copyRow("URL", url), copyRow("apikey (header)", CFG.supabaseKey), copyRow("p_token", t));
+      };
+      const make = h("button", { class: "btn ghost", type: "button" });
+      const setMake = () => { make.textContent = S.profile.sync_token ? "Make a new token (the old one stops working)" : "Create sync token"; };
+      make.addEventListener("click", async () => {
+        const b = new Uint8Array(24); crypto.getRandomValues(b);
+        const tok = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+        make.disabled = true;
+        const { error } = await sb.from("profiles").update({ sync_token: tok }).eq("user_id", S.user.id);
+        make.disabled = false;
+        if (error) return toast(errText(error));
+        S.profile.sync_token = tok; draw(); setMake(); toast("Token ready");
+      });
+      const steps = [
+        "Open the Shortcuts app and tap Automation at the bottom.",
+        "Tap +, then Time of Day. Set 22:00, Daily, choose Run Immediately, tap Next, then New Blank Automation.",
+        "Add the action Find Health Samples. Type: Steps. Start Date: is Today. Group By: Day.",
+        "Add Calculate Statistics: Sum of Health Samples.",
+        "Add Find Health Samples again. Type: Walking + Running Distance. Start Date: is Today. Group By: Day. Unit: km.",
+        "Add Calculate Statistics: Sum of that second Health Samples.",
+        "Add Get Contents of URL and paste the URL. Method: POST. Headers: apikey = the apikey above. Request Body: JSON.",
+        "In the JSON add three fields: p_token (Text, paste the token), p_steps (Number, first Statistics), p_km (Number, second Statistics).",
+        "Tap Done. To test, open the automation and tap the play button, then check Activity here."
+      ];
+      pg.append(sheetHead("Apple Watch sync", { left: ["‹ Back", closeSheet] }),
+        h("section", { class: "card" }, h("div", { class: "small muted", text: "An iPhone Shortcut reads today's steps and distance from Apple Health at 22:00 and sends them here. Your Watch syncs to Health on its own." }), box, make),
+        h("section", { class: "card" }, h("h3", { text: "Build the Shortcut" }),
+          h("ol", { class: "small", style: "margin:0;padding-left:20px;display:grid;gap:6px" }, ...steps.map(s => h("li", { text: s })))));
+      draw(); setMake();
+    });
   }
 
   // ================= sheets =================
