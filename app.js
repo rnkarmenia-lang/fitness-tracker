@@ -54,6 +54,14 @@
   const field = (label, input) => h("label", { class: "f" }, label, input);
   const textIn = (val, attrs = {}) => h("input", Object.assign({ class: "in-text", type: "text", value: val == null ? "" : String(val), autocomplete: "off" }, attrs));
   const numIn = (val, ph, mode = "decimal") => textIn(val, { inputmode: mode, placeholder: ph || "" });
+  // Amount boxes: tapping empties the box so a new number can be typed straight away.
+  // Leaving it empty puts the old amount back. Fires "input" so totals redraw.
+  function clearOnFocus(inp) {
+    let prev = "";
+    inp.addEventListener("focus", () => { prev = inp.value; if (prev !== "") { inp.placeholder = prev; inp.value = ""; inp.dispatchEvent(new Event("input")); } });
+    inp.addEventListener("blur", () => { if (inp.value.trim() === "" && prev !== "") { inp.value = prev; inp.dispatchEvent(new Event("input")); } });
+    return inp;
+  }
   function armDelete(btn, fn) {
     btn.addEventListener("click", () => {
       if (btn.classList.contains("armed")) return fn();
@@ -500,7 +508,7 @@
       const filters = [["all", "All"], ["recent", "Recent"], ["mine", "My foods"]];
       if (!pick) filters.push(["meals", "My meals"]);
       pg.append(head,
-        pick ? null : seg(MEALS, meal, v => { meal = v; title.textContent = `Add to ${MEAL[v]}`; }),
+        pick ? "" : seg(MEALS, meal, v => { meal = v; title.textContent = `Add to ${MEAL[v]}`; }),
         h("div", { class: "searchrow" }, search, h("button", { class: "scanbtn", "aria-label": "Scan a barcode", html: ICON.scan, onclick: () => scanSheet(meal, pick) })),
         h("div", { class: "row", style: "justify-content:flex-start;gap:8px" },
           pick ? null : h("button", { class: "pill", text: "Quick add", onclick: () => quickAddSheet(meal) }),
@@ -617,7 +625,7 @@
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
       pg.append(sheetHead("Amount", { left: ["‹ Back", closeSheet] }));
-      const qIn = numIn(unit === "serving" ? 1 : 100, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
+      const qIn = clearOnFocus(numIn(unit === "serving" ? 1 : 100, "", "decimal")); qIn.setAttribute("aria-label", "Amount");
       const uLbl = h("span", { class: "u" });
       const grid = h("div"), extra = h("div", { class: "small muted num" });
       const size = () => unit === "serving" ? f.serving_g : unit === "pack" ? f.pack_g : 1;
@@ -663,7 +671,7 @@
           h("div", { class: "stepper" }, h("button", { type: "button", text: "−", "aria-label": "Less", onclick: () => step(-stepSize()) }), h("div", { class: "unitwrap" }, qIn, uLbl),
             h("button", { type: "button", text: "+", "aria-label": "More", onclick: () => step(stepSize()) })),
           grid, extra),
-        pick ? null : h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
+        pick ? "" : h("section", { class: "card" }, field("Meal", seg(MEALS, meal, v => { meal = v; }))),
         msg, add);
       draw();
     });
@@ -767,7 +775,7 @@
     openSheet(el => {
       const pg = h("div", { class: "page" }); el.append(pg);
       pg.append(sheetHead("My meal", { left: ["‹ Back", closeSheet], right: ["Edit", () => mealBuilderSheet(m, m2 => { closeSheet(); onChange(m2); })] }));
-      const qIn = numIn(1, "", "decimal"); qIn.setAttribute("aria-label", "Amount");
+      const qIn = clearOnFocus(numIn(1, "", "decimal")); qIn.setAttribute("aria-label", "Amount");
       const uLbl = h("span", { class: "u" });
       const grid = h("div"), extra = h("div", { class: "small muted num" });
       const frac = () => { const q = num(qIn.value) || 0; return unit === "portion" ? q / mi.portions : q / cooked; };
@@ -815,7 +823,7 @@
       const depth = stack.length;
       const pg = h("div", { class: "page" }); el.append(pg);
       const name = textIn(m ? m.name : "", { placeholder: "Overnight oats", maxlength: "80" });
-      const portions = numIn(m ? r1(Number(m.portions) || 1) : 1, "1");
+      const portions = clearOnFocus(numIn(m ? r1(Number(m.portions) || 1) : 1, "1"));
       const cooked = numIn(m && m.total_g ? r1(Number(m.total_g)) : "", "optional");
       const list = h("div", { style: "display:grid" }), sum = h("div", { style: "display:grid;gap:8px" });
       const msg = h("div", { class: "msg", role: "status" });
@@ -836,6 +844,7 @@
           const setSub = () => { const n = per(i.food, n0(i.grams)); sub.textContent = `${fmt(n.kcal)} kcal · P ${r1(n.protein)} · Fibre ${n.fibre == null ? "–" : r1(n.fibre)}`; };
           const g = numIn(r1(i.grams), "0"); g.setAttribute("aria-label", `Amount of ${i.food.name}`);
           g.addEventListener("input", () => { i.grams = num(g.value) || 0; setSub(); drawSum(); });
+          clearOnFocus(g);
           setSub();
           list.append(h("div", { class: "item ing" },
             h("div", null, h("div", { class: "nm", text: i.food.name }), sub),
@@ -893,7 +902,7 @@
           h("div", { class: "tiny muted", text: "Cooked weight is optional. Weigh the finished dish and you can log it by grams too." })),
         h("section", { class: "card" }, h("h2", { text: "Ingredients" }), list, h("div", { class: "acts" }, addIng)),
         h("section", { class: "card" }, sum),
-        msg, save, del);
+        msg, save, del || "");
       drawList();
     });
   }
