@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Fitness">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#cfe8fb">
 <title>Fitness Tracker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <style>
-  :root { --bg:#000; --card:#1c1c1e; --line:#38383a; --ink:#f2f2f7; --muted:#8e8e93; --accent:#64b5f6; --on-accent:#00203a; color-scheme: dark; }
+  :root { --bg:#cfe8fb; --card:#ffffff; --field:#f5fafe; --seg:#e3f0fa; --line:#b9d3e8; --ink:#0b1f33; --muted:#4d6478; --accent:#fa114f; --on-accent:#ffffff; --err:#c0392b; color-scheme: light; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
   main { max-width: 480px; margin: 0 auto; min-height: 100vh; display: grid; align-content: center; gap: 20px;
@@ -22,16 +22,16 @@
   .sub { color: var(--muted); text-align: center; margin: -12px 0 0; font-size: 14px; }
   .rings { display: block; margin: 0 auto; }
   .card { background: var(--card); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: #2c2c2e; border-radius: 10px; padding: 2px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--seg); border-radius: 10px; padding: 2px; }
   .seg button { height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; }
-  .seg button[aria-pressed="true"] { background: #636366; color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(11,31,51,.12); }
   label { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
-  input { height: 48px; border-radius: 12px; border: 1px solid var(--line); background: #000; color: var(--ink); font: inherit; font-size: 16px; padding: 0 14px; width: 100%; }
+  input { height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font: inherit; font-size: 16px; padding: 0 14px; width: 100%; }
   input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .go { height: 50px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; }
   .go:disabled { opacity: .5; }
   .msg { min-height: 1.3em; font-size: 14px; color: var(--muted); }
-  .msg.err { color: #ff6961; }
+  .msg.err { color: var(--err); }
   .link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 14px; padding: 8px 0; justify-self: center; }
   [hidden] { display: none !important; }
 </style>
@@ -40,9 +40,9 @@
 <main>
   <svg class="rings" width="96" height="96" viewBox="0 0 104 104" aria-hidden="true">
     <g transform="rotate(-90 52 52)" fill="none" stroke-linecap="round" stroke-width="11">
-      <circle cx="52" cy="52" r="45" stroke="#3a0b16"/><circle cx="52" cy="52" r="45" stroke="#fa114f" stroke-dasharray="282.7" stroke-dashoffset="70"/>
-      <circle cx="52" cy="52" r="32" stroke="#22330a"/><circle cx="52" cy="52" r="32" stroke="#92e82a" stroke-dasharray="201" stroke-dashoffset="60"/>
-      <circle cx="52" cy="52" r="19" stroke="#0b3335"/><circle cx="52" cy="52" r="19" stroke="#1eeaef" stroke-dasharray="119.4" stroke-dashoffset="30"/>
+      <circle cx="52" cy="52" r="45" stroke="#f6c2cf"/><circle cx="52" cy="52" r="45" stroke="#fa114f" stroke-dasharray="282.7" stroke-dashoffset="70"/>
+      <circle cx="52" cy="52" r="32" stroke="#d6f1b4"/><circle cx="52" cy="52" r="32" stroke="#6cc51b" stroke-dasharray="201" stroke-dashoffset="60"/>
+      <circle cx="52" cy="52" r="19" stroke="#bfeff3"/><circle cx="52" cy="52" r="19" stroke="#14b8c4" stroke-dasharray="119.4" stroke-dashoffset="30"/>
     </g>
   </svg>
   <h1>Fitness Tracker</h1>
