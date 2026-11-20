@@ -475,15 +475,59 @@
     const j = await r.json();
     return j.status === 1 ? fromOff(Object.assign({ code }, j.product)) : null;
   }
+  // ---- Search relevance ----
+  // USDA names cooking methods differently: baked/grilled fish is "cooked, dry heat", boiled is "cooked, moist heat".
+  const COOK = { baked: "dry", bake: "dry", roasted: "dry", roast: "dry", grilled: "dry", grill: "dry", broiled: "dry", oven: "dry",
+    boiled: "moist", steamed: "moist", poached: "moist", stewed: "moist", cooked: "any", fried: "fried", pan: "fried" };
+  // Forms that are usually not what you meant when you asked for a cooked food.
+  const UNCOOKED = ["raw", "smoked", "canned", "dried", "oil", "fermented", "frozen", "powder", "liver", "kippered", "unheated"];
+  const words = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/).filter(w => w.length > 1);
+  const stem = w => w.replace(/(ies)$/, "y").replace(/(es|s)$/, "");
+  function relevance(term, f) {
+    const q = words(term), nm = words(f.name), all = new Set([...nm, ...words(f.brand)].map(stem));
+    if (!q.length) return 0;
+    let score = 0, hit = 0, cookAsked = false;
+    q.forEach(w => {
+      const c = COOK[w], s = stem(w), wt = c ? 2 : 3;   // the food itself counts more than how it's cooked
+      if (c) cookAsked = true;
+      if (all.has(s)) { score += wt; hit++; return; }
+      if (c && all.has("cooked") && (c === "any" || all.has(c) || c === "fried")) { score += wt; hit++; return; }
+      // Near matches only: "tomato" ~ "tomatoes", not "egg" ~ "eggplant"
+      if (s.length >= 4 && [...all].some(x => x.startsWith(s) && x.length - s.length <= 3)) { score += wt / 2; hit++; }
+    });
+    if (hit === q.length) score += 4;               // every word you typed is there
+    if (hit === 0) score -= 10;                     // nothing matches
+    if (cookAsked) score -= 3 * UNCOOKED.filter(u => all.has(u) && !q.includes(u)).length;
+    score -= 1.5 * ["oil", "babyfood", "liver", "native"].filter(u => all.has(u) && !q.includes(u)).length;
+    const main = q.find(w => !COOK[w]);
+    if (main && nm.slice(0, 2).some(x => stem(x) === stem(main))) score += 1; // "Bananas, raw" / "Fish, salmon, …" near the top
+    score -= Math.max(0, nm.length - q.length) * 0.15; // shorter, closer names first
+    return score;
+  }
+  function rankFoods(term, list) {
+    return list.map((f, i) => ({ f, i, s: relevance(term, f) + (f.source === "usda" ? 0.5 : 0) }))
+      .sort((a, b) => b.s - a.s || a.i - b.i).map(x => x.f);
+  }
+
   async function searchUsda(q, signal) {
-    const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${CFG.usdaKey}&query=${encodeURIComponent(q)}&pageSize=20&dataType=Foundation,SR%20Legacy`;
-    const r = await fetch(url, { signal }); if (!r.ok) throw new Error("USDA didn't answer");
-    const j = await r.json();
-    return (j.foods || []).map(f => {
+    // Also ask with USDA's own cooking words, e.g. "baked salmon" → "salmon cooked dry heat".
+    const qw = words(q);
+    const alt = qw.some(w => COOK[w] && COOK[w] !== "fried" && COOK[w] !== "any")
+      ? qw.map(w => COOK[w] === "dry" ? "cooked dry heat" : COOK[w] === "moist" ? "cooked moist heat" : w).join(" ") : null;
+    const one = async query => {
+      const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${CFG.usdaKey}&query=${encodeURIComponent(query)}&pageSize=50&dataType=Foundation,SR%20Legacy`;
+      const r = await fetch(url, { signal }); if (!r.ok) throw new Error("USDA didn't answer");
+      return (await r.json()).foods || [];
+    };
+    const lists = await Promise.all([one(q), alt ? one(alt).catch(() => []) : []]);
+    const seen = new Set(), foods = [];
+    lists.flat().forEach(f => { if (!seen.has(f.fdcId)) { seen.add(f.fdcId); foods.push(f); } });
+    return foods.map(f => {
       const v = no => { const x = (f.foodNutrients || []).find(n => String(n.nutrientNumber) === no); return x ? num(x.value) : null; };
       const kcal = v("208") ?? v("957") ?? v("958");
       if (kcal == null) return null;
-      const name = f.description.charAt(0) + f.description.slice(1).toLowerCase();
+      const name = (f.description.charAt(0) + f.description.slice(1).toLowerCase())
+        .replace(/cooked, dry heat/, "cooked, dry heat (baked/grilled)").replace(/cooked, moist heat/, "cooked, moist heat (boiled/steamed)");
       const liquid = USDA_LIQUID_RE.test(f.description) && !/\b(powder|dry|dried|instant)\b/i.test(f.description);
       return { source: "usda", source_id: String(f.fdcId), barcode: null, name, brand: null, serving_name: null, serving_g: null, unit: liquid ? "ml" : "g", pack_g: null, pack_name: null,
         kcal, protein: v("203"), carbs: v("205"), fat: v("204"), fibre: v("291"), sugar: v("269"), sat_fat: v("606"), sodium_mg: v("307") };
@@ -570,7 +614,7 @@
         results.append(dbB);
         const got = { usda: null, off: null };
         const paint = () => {
-          const list = [...(got.usda || []), ...(got.off || [])];
+          const list = rankFoods(term, [...(got.usda || []), ...(got.off || [])]).slice(0, 40);
           const waiting = got.usda == null || got.off == null;
           const failed = [got.usda === false ? "USDA" : null, got.off === false ? "Open Food Facts" : null].filter(Boolean);
           const note = failed.length ? `Couldn't reach ${failed.join(" or ")}. Try again.` : !list.length ? (waiting ? "Searching…" : "No matches.") : null;
