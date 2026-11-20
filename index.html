@@ -11,7 +11,7 @@
 <title>Fitness Tracker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <style>
   :root { --bg:#cfe8fb; --card:#ffffff; --field:#f5fafe; --seg:#e3f0fa; --line:#b9d3e8; --ink:#0b1f33; --muted:#4d6478; --accent:#fa114f; --on-accent:#ffffff; --err:#c0392b; color-scheme: light; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -38,12 +38,10 @@
 </head>
 <body>
 <main>
-  <svg class="rings" width="96" height="96" viewBox="0 0 104 104" aria-hidden="true">
-    <g transform="rotate(-90 52 52)" fill="none" stroke-linecap="round" stroke-width="11">
-      <circle cx="52" cy="52" r="45" stroke="#f6c2cf"/><circle cx="52" cy="52" r="45" stroke="#fa114f" stroke-dasharray="282.7" stroke-dashoffset="70"/>
-      <circle cx="52" cy="52" r="32" stroke="#d6f1b4"/><circle cx="52" cy="52" r="32" stroke="#6cc51b" stroke-dasharray="201" stroke-dashoffset="60"/>
-      <circle cx="52" cy="52" r="19" stroke="#bfeff3"/><circle cx="52" cy="52" r="19" stroke="#14b8c4" stroke-dasharray="119.4" stroke-dashoffset="30"/>
-    </g>
+  <svg class="rings" width="96" height="96" viewBox="20 16 80 86" aria-hidden="true">
+    <path d="M60 40c-8-8-30-8-32 16-2 22 14 42 24 42 4 0 6-2 8-2s4 2 8 2c10 0 26-20 24-42-2-24-24-24-32-16z" fill="#fa114f"/>
+    <path d="M60 40c0-8 4-14 10-18" fill="none" stroke="#2fa84f" stroke-width="5" stroke-linecap="round"/>
+    <path d="M30 66h14l6-10 8 20 6-14h26" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
   <h1>Fitness Tracker</h1>
   <p class="sub">Food, activity and weight in one place</p>
