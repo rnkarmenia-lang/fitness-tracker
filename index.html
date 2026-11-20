@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fitness">
+<meta name="theme-color" content="#000000">
+<title>Fitness Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+  :root { --bg:#000; --card:#1c1c1e; --line:#38383a; --ink:#f2f2f7; --muted:#8e8e93; --move:#fa114f; --fib:#1eeaef; color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; min-height: 100vh; display: grid; align-content: center; gap: 20px;
+    padding: calc(24px + env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+  h1 { font-size: 28px; margin: 0; text-align: center; letter-spacing: -.01em; }
+  .sub { color: var(--muted); text-align: center; margin: -12px 0 0; font-size: 14px; }
+  .rings { display: block; margin: 0 auto; }
+  .card { background: var(--card); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: #2c2c2e; border-radius: 10px; padding: 2px; }
+  .seg button { height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; }
+  .seg button[aria-pressed="true"] { background: #636366; color: var(--ink); }
+  label { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+  input { height: 48px; border-radius: 12px; border: 1px solid var(--line); background: #000; color: var(--ink); font: inherit; font-size: 16px; padding: 0 14px; width: 100%; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--fib); outline-offset: 2px; }
+  .go { height: 50px; border: 0; border-radius: 14px; background: var(--move); color: #fff; font: inherit; font-weight: 600; }
+  .go:disabled { opacity: .5; }
+  .msg { min-height: 1.3em; font-size: 14px; color: var(--muted); }
+  .msg.err { color: #ff6961; }
+  .link { background: none; border: 0; color: var(--fib); font: inherit; font-size: 14px; padding: 8px 0; justify-self: center; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <svg class="rings" width="96" height="96" viewBox="0 0 104 104" aria-hidden="true">
+    <g transform="rotate(-90 52 52)" fill="none" stroke-linecap="round" stroke-width="11">
+      <circle cx="52" cy="52" r="45" stroke="#3a0b16"/><circle cx="52" cy="52" r="45" stroke="#fa114f" stroke-dasharray="282.7" stroke-dashoffset="70"/>
+      <circle cx="52" cy="52" r="32" stroke="#22330a"/><circle cx="52" cy="52" r="32" stroke="#92e82a" stroke-dasharray="201" stroke-dashoffset="60"/>
+      <circle cx="52" cy="52" r="19" stroke="#0b3335"/><circle cx="52" cy="52" r="19" stroke="#1eeaef" stroke-dasharray="119.4" stroke-dashoffset="30"/>
+    </g>
+  </svg>
+  <h1>Fitness Tracker</h1>
+  <p class="sub">Food, activity and weight in one place</p>
+
+  <section class="card" id="authCard" hidden>
+    <div class="seg" role="group" aria-label="Choose sign in or create account">
+      <button type="button" id="tabIn" aria-pressed="true">Sign in</button>
+      <button type="button" id="tabUp" aria-pressed="false">Create account</button>
+    </div>
+    <form id="authForm" novalidate>
+      <div style="display:grid;gap:12px">
+        <label id="userRow" hidden>Username<input id="username" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="30"></label>
+        <label>Email<input id="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false"></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" minlength="8"></label>
+        <button class="go" type="submit" id="goBtn">Sign in</button>
+        <div class="msg" id="msg" role="status"></div>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" id="homeCard" hidden>
+    <div><b id="hello">Signed in</b></div>
+    <div class="msg">Setup works. The Diary, Activity and Weight screens arrive in phase 2.</div>
+    <button class="link" type="button" id="signOut">Sign out</button>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const sb = window.supabase.createClient(FM_CONFIG.supabaseUrl, FM_CONFIG.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true } });
+  let mode = "in";
+
+  function say(t, err) { $("msg").textContent = t; $("msg").className = "msg" + (err ? " err" : ""); }
+  function setMode(m) {
+    mode = m;
+    $("tabIn").setAttribute("aria-pressed", m === "in");
+    $("tabUp").setAttribute("aria-pressed", m === "up");
+    $("userRow").hidden = m !== "up";
+    $("password").autocomplete = m === "up" ? "new-password" : "current-password";
+    $("goBtn").textContent = m === "up" ? "Create account" : "Sign in";
+    say("");
+  }
+  function show(session) {
+    $("authCard").hidden = !!session;
+    $("homeCard").hidden = !session;
+    if (session) {
+      const u = session.user, name = (u.user_metadata && u.user_metadata.username) || u.email;
+      $("hello").textContent = "Signed in as " + name;
+    }
+  }
+
+  $("tabIn").onclick = () => setMode("in");
+  $("tabUp").onclick = () => setMode("up");
+
+  $("authForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const email = $("email").value.trim(), password = $("password").value, username = $("username").value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) return say("Enter your email address.", true);
+    if (password.length < 8) return say("Use a password of at least 8 characters.", true);
+    if (mode === "up" && !/^[a-zA-Z0-9_.-]{3,30}$/.test(username)) return say("Username: 3–30 letters, numbers, dots, dashes or underscores.", true);
+    $("goBtn").disabled = true;
+    try {
+      if (mode === "up") {
+        const { error } = await sb.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: location.origin + location.pathname } });
+        if (error) throw error;
+        setMode("in");
+        say("Check your email and tap the confirmation link, then sign in here.");
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (err) {
+      const m = String(err && err.message || "");
+      say(/confirm/i.test(m) ? "Confirm your email first: tap the link we sent you." :
+          /invalid login/i.test(m) ? "Email or password doesn't match." :
+          /already registered/i.test(m) ? "That email already has an account. Sign in instead." :
+          "Couldn't reach the server. Check your connection and try again.", true);
+    } finally { $("goBtn").disabled = false; }
+  });
+
+  $("signOut").onclick = () => sb.auth.signOut();
+  sb.auth.onAuthStateChange((_evt, session) => show(session));
+  sb.auth.getSession().then(({ data }) => show(data.session));
+})();
+</script>
+</body>
+</html>
