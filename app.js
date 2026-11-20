@@ -1017,9 +1017,26 @@
     if (session) setTimeout(() => enter(session), 0); else { S.user = null; closeAll(); renderAuth(); }
   });
 
+  // Auto-update: the Home Screen app can keep an old index.html cached for a while.
+  // Fetch a fresh copy, and if it points at a newer app.js version, reload once.
+  const VER = ((document.querySelector('script[src*="app.js"]') || {}).src || "").match(/v=(\d+)/);
+  async function checkUpdate() {
+    if (!VER) return;
+    try {
+      const r = await fetch("index.html", { cache: "reload" });
+      const m = (await r.text()).match(/app\.js\?v=(\d+)/);
+      if (m && m[1] !== VER[1] && sessionStorage.getItem("ft-upd") !== m[1]) {
+        sessionStorage.setItem("ft-upd", m[1]);
+        location.reload();
+      }
+    } catch (_) { /* offline or blocked: keep running this version */ }
+  }
+  checkUpdate();
+
   // New day while the app stayed open
   let lastToday = today();
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkUpdate();
     if (document.visibilityState !== "visible" || !S.user) return;
     const n = today();
     if (n !== lastToday) { if (S.day === lastToday) S.day = n; lastToday = n; refresh(); }
