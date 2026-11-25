@@ -482,7 +482,7 @@
       });
       const steps = [
         "Open the Shortcuts app and tap Automation at the bottom.",
-        "Tap +, then Time of Day. Set 22:00, Daily, choose Run Immediately, tap Next, then New Blank Automation.",
+        "Tap +, then Time of Day. Set 23:59, Daily, choose Run Immediately, tap Next, then New Blank Automation.",
         "Add the action Find Health Samples. Type: Steps. Start Date: is Today. Group By: Day.",
         "Add Calculate Statistics: Sum of Health Samples.",
         "Add Find Health Samples again. Type: Walking + Running Distance. Start Date: is Today. Group By: Day. Unit: km.",
@@ -492,7 +492,7 @@
         "Tap Done. To test, open the automation and tap the play button, then check Activity here."
       ];
       pg.append(sheetHead("Apple Watch sync", { left: ["‹ Back", closeSheet] }),
-        h("section", { class: "card" }, h("div", { class: "small muted", text: "An iPhone Shortcut reads today's steps and distance from Apple Health at 22:00 and sends them here. Your Watch syncs to Health on its own." }), box, make),
+        h("section", { class: "card" }, h("div", { class: "small muted", text: "An iPhone Shortcut reads today's steps and distance from Apple Health at 23:59 and sends them here. Your Watch syncs to Health on its own." }), box, make),
         h("section", { class: "card" }, h("h3", { text: "Build the Shortcut" }),
           h("ol", { class: "small", style: "margin:0;padding-left:20px;display:grid;gap:6px" }, ...steps.map(s => h("li", { text: s })))));
       draw(); setMake();
