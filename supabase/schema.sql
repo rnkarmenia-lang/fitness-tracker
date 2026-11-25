@@ -215,3 +215,16 @@ begin
 end $$;
 revoke all on function public.sync_activity(text, numeric, numeric, date, text) from public;
 grant execute on function public.sync_activity(text, numeric, numeric, date, text) to anon, authenticated;
+
+-- ---------- Added in phase 5: goal weight + progress photos (see migrations/004_weight_and_photos.sql) ----------
+-- Each Profile save records the weight the calorie goals start from.
+alter table public.goal_history add column if not exists kg numeric;
+
+-- Private bucket for progress photos. Files live under <your user id>/...
+insert into storage.buckets (id, name, public) values ('photos', 'photos', false)
+on conflict (id) do nothing;
+
+drop policy if exists "photos own folder" on storage.objects;
+create policy "photos own folder" on storage.objects for all to authenticated
+  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);

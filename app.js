@@ -195,12 +195,13 @@
   // ================= data =================
   async function loadProfile() {
     const uid = S.user.id;
-    const [{ data: p, error: e1 }, { data: w, error: e2 }] = await Promise.all([
+    const [{ data: p, error: e1 }, { data: w, error: e2 }, { data: gh }] = await Promise.all([
       sb.from("profiles").select("*").eq("user_id", uid).maybeSingle(),
-      sb.from("weights").select("date,kg").order("date")
+      sb.from("weights").select("date,kg,note").order("date"),
+      sb.from("goal_history").select("date,kg").not("kg", "is", null).order("date")
     ]);
     if (e1) throw e1; if (e2) throw e2;
-    S.profile = p; S.weights = w || [];
+    S.profile = p; S.weights = w || []; S.goalHist = gh || [];
   }
   async function loadDay() {
     const y = iso(addDays(parse(S.day), -1));
@@ -231,8 +232,7 @@
     root.append(h("main", { class: "page" }, top, view), tabs());
     if (S.tab === "diary") renderDiary(view);
     else if (S.tab === "activity") renderActivity(view);
-    else view.append(h("div", { class: "card" }, h("h2", { text: "Weight" }),
-      h("p", { class: "muted", style: "margin:0", text: "Weigh-ins, trend and photos arrive in phase 5. Your current weight is kept in Profile for now." })));
+    else renderWeight(view);
   }
   function tabs() {
     const b = (id, label) => h("button", { "aria-current": S.tab === id ? "page" : null, html: ICON[id] + `<span>${label}</span>`, onclick: () => { S.tab = id; renderMain(); window.scrollTo(0, 0); } });
@@ -257,7 +257,7 @@
       `</g></svg>`;
   }
   function renderDiary(view) {
-    const g = goalsFor(S.profile, weightOn(S.day), S.day);
+    const g = goalsFor(S.profile, goalKg(S.day).kg, S.day);
     const tot = k => S.entries.reduce((a, e) => a + n0(e[k]), 0);
     const kin = tot("kcal"), prot = tot("protein"), fib = tot("fibre"), carbs = tot("carbs"), fat = tot("fat"), sugar = tot("sugar"), sodium = tot("sodium_mg");
     const ex = S.workouts.reduce((a, w) => a + n0(w.kcal), 0);
@@ -275,7 +275,8 @@
         h("span", { class: "chip" }, "Carbs ", h("b", { text: `${fmt(carbs)}${g ? " / " + g.carbs : ""} g` })),
         h("span", { class: "chip" }, "Fat ", h("b", { text: `${fmt(fat)}${g ? " / " + g.fat : ""} g` })),
         h("span", { class: "chip" }, "Sugar ", h("b", { text: `${fmt(sugar)} g` })),
-        h("span", { class: "chip" }, "Sodium ", h("b", { text: `${fmt(sodium)} mg` })))));
+        h("span", { class: "chip" }, "Sodium ", h("b", { text: `${fmt(sodium)} mg` }))),
+      h("button", { class: "link", style: "justify-self:start", text: "Nutrition trends ›", onclick: trendsSheet })));
 
     MEALS.forEach(([mk, mn]) => {
       const items = S.entries.filter(e => e.meal === mk);
@@ -313,16 +314,17 @@
   const metKcal = (type, minutes, kg) => (kg && minutes > 0) ? Math.round(((WT[type] || WT.other)[2] - 1) * kg * minutes / 60) : 0;
   const hhmm = ts => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-  function stepsChart(days, vals, goal) {
+  // Bars per day with a dashed goal line. color(v) picks each bar's colour.
+  function barChart(days, vals, goal, unit, color) {
     const W = 320, H = 150, top = 12, bottom = 22, n = days.length;
     const max = Math.max(goal, ...vals.map(v => v || 0)) * 1.08;
     const y = v => top + (H - top - bottom) * (1 - v / max);
     const bw = (W / n) * (n > 10 ? 0.7 : 0.6), gx = i => (W / n) * (i + 0.5);
-    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Steps per day, goal ${fmt(goal)}">`;
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${unit} per day, goal ${fmt(goal)}">`;
     s += `<line x1="0" x2="${W}" y1="${y(goal).toFixed(1)}" y2="${y(goal).toFixed(1)}" stroke="var(--prot)" stroke-dasharray="4 4" stroke-width="1.5"/>`;
     s += `<text x="${W}" y="${(y(goal) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--prot)">goal ${fmt(goal)}</text>`;
     vals.forEach((v, i) => {
-      if (v) { const yy = y(v); s += `<rect x="${(gx(i) - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - bottom - yy).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}" fill="${v >= goal ? "#1e7fd8" : "#8cc1ef"}"><title>${days[i]}: ${fmt(v)} steps</title></rect>`; }
+      if (v) { const yy = y(v); s += `<rect x="${(gx(i) - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - bottom - yy).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}" fill="${color(v)}"><title>${days[i]}: ${fmt(v)} ${unit}</title></rect>`; }
       const d = parse(days[i]);
       const lab = n <= 10 ? d.toLocaleDateString("en-GB", { weekday: "narrow" }) : (i % 7 === 0 || i === n - 1 ? String(d.getDate()) : "");
       if (lab) s += `<text x="${gx(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">${lab}</text>`;
@@ -378,7 +380,7 @@
       const km = (da || []).reduce((s, x) => s + n0(x.km), 0);
       const hit = have.filter(v => v >= goal).length;
       const stat = (k, v, u) => h("div", null, h("span", { class: "v" }, v, u ? h("small", { text: u }) : null), h("span", { class: "k", text: k }));
-      body.append(stepsChart(days, vals, goal),
+      body.append(barChart(days, vals, goal, "steps", v => v >= goal ? "#1e7fd8" : "#8cc1ef"),
         h("div", { class: "ngrid num", style: "grid-template-columns:repeat(4,minmax(0,1fr))" },
           stat("Avg steps", avg == null ? "–" : fmt(avg)), stat("Distance", r1(km), "km"),
           stat("Workouts", String((wk || []).length)), stat("Exercise", fmt((wk || []).reduce((s, w) => s + n0(w.kcal), 0)), "kcal")),
@@ -496,6 +498,286 @@
         h("section", { class: "card" }, h("h3", { text: "Build the Shortcut" }),
           h("ol", { class: "small", style: "margin:0;padding-left:20px;display:grid;gap:6px" }, ...steps.map(s => h("li", { text: s })))));
       draw(); setMake();
+    });
+  }
+
+  // ================= WEIGHT =================
+  // Trend = exponentially smoothed weight, 10% per day. A gap of n days gives the new weigh-in a 1 − 0.9ⁿ share.
+  const ALPHA = 0.1;
+  const dShort = d => parse(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  function trendSeries(ws) {
+    let prev = null, pd = null;
+    return ws.map(w => {
+      const kg = Number(w.kg);
+      if (prev == null) prev = kg;
+      else prev += (1 - Math.pow(1 - ALPHA, Math.max(1, daysBetween(pd, w.date)))) * (kg - prev);
+      pd = w.date;
+      return { date: w.date, kg, note: w.note, trend: prev };
+    });
+  }
+  // The weight calorie goals use on a date. Starts from the last Profile save (or first weigh-in), then on each
+  // Monday after that it moves to the trend weight if the trend has moved 0.5 kg or more. Manual goals are untouched.
+  function goalKg(d) {
+    const anchors = (S.goalHist || []).filter(x => x.date <= d);
+    let g, from;
+    if (anchors.length) { g = Number(anchors[anchors.length - 1].kg); from = anchors[anchors.length - 1].date; }
+    else if (S.weights.length && S.weights[0].date <= d) { g = Number(S.weights[0].kg); from = S.weights[0].date; }
+    else return { kg: weightOn(d), from: null, moved: null };
+    const series = trendSeries(S.weights);
+    let m = parse(from); m = addDays(m, ((8 - m.getDay()) % 7) || 7);
+    let moved = null;
+    for (const end = parse(d); m <= end; m = addDays(m, 7)) {
+      const ms = iso(m), pts = series.filter(x => x.date <= ms);
+      if (!pts.length) continue;
+      const tr = pts[pts.length - 1].trend;
+      if (Math.abs(tr - g) >= 0.5) { g = tr; moved = ms; }
+    }
+    return { kg: Math.round(g * 10) / 10, from, moved };
+  }
+
+  function weightChart(pts, from, to, mode, target) {
+    if (!pts.length) return h("div", { class: "empty", text: "No weigh-ins in this range." });
+    const W = 320, H = 180, L = 36, R = 8, T = 10, B = 22;
+    const vals = pts.flatMap(p => [p.kg, p.trend]);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (target != null && target >= lo - 2 && target <= hi + 2) { lo = Math.min(lo, target); hi = Math.max(hi, target); }
+    const pad = Math.max(0.4, (hi - lo) * 0.12); lo -= pad; hi += pad;
+    const span = Math.max(1, daysBetween(from, to));
+    const x = d => L + (W - L - R) * daysBetween(from, d) / span;
+    const y = v => T + (H - T - B) * (hi - v) / (hi - lo);
+    const line = (key, col, w) => pts.length > 1 ? `<polyline fill="none" stroke="${col}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p => x(p.date).toFixed(1) + "," + y(p[key]).toFixed(1)).join(" ")}"/>` : "";
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Weight from ${dShort(from)} to ${dShort(to)}">`;
+    for (let i = 0; i < 4; i++) {
+      const v = lo + pad + (hi - lo - 2 * pad) * i / 3, yy = y(v).toFixed(1);
+      s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${r1(v)}</text>`;
+    }
+    if (target != null && target > lo && target < hi) {
+      const yy = y(target).toFixed(1);
+      s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--prot)" stroke-dasharray="4 4" stroke-width="1.5"/><text x="${W - R}" y="${(yy - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--prot)">target ${r1(target)}</text>`;
+    }
+    if (mode === "trend") {
+      s += line("trend", "var(--accent)", 3);
+      pts.forEach(p => { s += `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.kg).toFixed(1)}" r="2.5" fill="#8cc1ef"><title>${dShort(p.date)}: ${r1(p.kg)} kg, trend ${r1(p.trend)}</title></circle>`; });
+    } else {
+      s += line("kg", "#1e7fd8", 2);
+      pts.forEach(p => { s += `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.kg).toFixed(1)}" r="3.5" fill="#1e7fd8"><title>${dShort(p.date)}: ${r1(p.kg)} kg</title></circle>`; });
+    }
+    [from, iso(addDays(parse(from), Math.round(span / 2))), to].forEach((d, i) => {
+      s += `<text x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="${["start", "middle", "end"][i]}" font-size="10" fill="var(--muted)">${dShort(d)}</text>`;
+    });
+    return h("div", { html: s + "</svg>" });
+  }
+
+  function renderWeight(view) {
+    const series = trendSeries(S.weights), last = series[series.length - 1], p = S.profile || {}, t = today();
+    const target = p.target_weight_kg != null ? Number(p.target_weight_kg) : null;
+    const gk = goalKg(t);
+    const sum = h("section", { class: "card" },
+      h("div", { class: "row" }, h("h2", { text: "Weight" }), h("button", { class: "pill accent", text: "+ Add weigh-in", onclick: () => weighSheet(null) })));
+    if (!last) sum.append(h("div", { class: "empty", text: "No weigh-ins yet." }));
+    else {
+      sum.append(h("div", { class: "big num" }, r1(last.kg), h("small", { text: " kg" })),
+        h("div", { class: "small muted num", text: `${last.date === t ? "Today" : dShort(last.date)} · trend ${r1(last.trend)} kg` }));
+      if (target != null) sum.append(h("div", { class: "small num", text: `Target ${r1(target)} kg${p.target_date ? " by " + parse(p.target_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""} · ${r1(Math.abs(last.trend - target))} kg to go` }));
+    }
+    sum.append(h("div", { class: "tiny muted", text: `Calorie goals use ${gk.kg == null ? "–" : r1(gk.kg)} kg${gk.moved ? `, your trend on Monday ${dShort(gk.moved)}` : ""}. They update on Mondays when your trend moves 0.5 kg or more.` }));
+    view.append(sum);
+
+    // Chart with Daily/Trend toggle and ranges
+    const body = h("div", { style: "display:grid;gap:10px" });
+    const custom = h("div", { class: "grid2" });
+    const fromIn = textIn(S.wFrom || iso(addDays(new Date(), -29)), { type: "date", max: t });
+    const toIn = textIn(S.wTo || t, { type: "date", max: t });
+    fromIn.addEventListener("change", () => { S.wFrom = fromIn.value; draw(); });
+    toIn.addEventListener("change", () => { S.wTo = toIn.value; draw(); });
+    custom.append(field("From", fromIn), field("To", toIn));
+    const list = h("section", { class: "card" });
+    view.append(h("section", { class: "card" },
+      seg([["day", "Daily"], ["trend", "Trend"]], S.wMode || "trend", v => { S.wMode = v; draw(); }),
+      seg([[7, "Week"], [14, "2 wks"], [30, "Month"], [365, "Year"], ["custom", "Custom"]], S.wRange || 30, v => { S.wRange = v; draw(); }),
+      custom, body), list);
+    function draw() {
+      const r = S.wRange || 30;
+      custom.hidden = r !== "custom";
+      let from, to;
+      if (r === "custom") { from = fromIn.value || iso(addDays(new Date(), -29)); to = toIn.value || t; if (from > to) [from, to] = [to, from]; }
+      else { to = t; from = iso(addDays(new Date(), -(Number(r) - 1))); }
+      const pts = series.filter(x => x.date >= from && x.date <= to);
+      body.innerHTML = "";
+      body.append(weightChart(pts, from, to, S.wMode || "trend", target));
+      if (pts.length > 1) {
+        const ch = pts[pts.length - 1].trend - pts[0].trend, days = Math.max(1, daysBetween(pts[0].date, pts[pts.length - 1].date));
+        body.append(h("div", { class: "small muted num", text: `Trend ${ch > 0 ? "+" : ""}${r1(ch)} kg over this range (${ch / days * 7 > 0 ? "+" : ""}${r1(ch / days * 7)} kg a week) · ${pts.length} weigh-ins` }));
+      }
+      list.innerHTML = "";
+      list.append(h("h2", { text: "Weigh-ins" }));
+      if (!pts.length) list.append(h("div", { class: "empty", text: "None in this range." }));
+      pts.slice().reverse().slice(0, 40).forEach(w => list.append(h("div", { class: "item" },
+        h("button", { type: "button", style: "text-align:left", onclick: () => weighSheet(w) },
+          h("div", { class: "nm", text: parse(w.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) }),
+          h("div", { class: "sub num", text: [`trend ${r1(w.trend)} kg`, w.note].filter(Boolean).join(" · ") })),
+        h("div", { class: "kc num" }, r1(w.kg), h("small", { text: "kg" })),
+        armDelete(h("button", { class: "del", text: "✕", "aria-label": "Delete weigh-in" }), async () => {
+          const { error } = await sb.from("weights").delete().eq("date", w.date).eq("user_id", S.user.id);
+          if (error) return toast(errText(error));
+          await loadProfile(); await refresh();
+        }))));
+    }
+    draw();
+    renderPhotos(view);
+  }
+
+  function weighSheet(w) {
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const t = today();
+      const date = textIn(w ? w.date : (S.day <= t ? S.day : t), { type: "date", max: t });
+      const kg = numIn(w ? r1(w.kg) : (S.weights.length ? r1(Number(S.weights[S.weights.length - 1].kg)) : ""), "85.0");
+      clearOnFocus(kg);
+      const note = textIn(w ? w.note || "" : "", { placeholder: "optional, e.g. after holiday", maxlength: "60" });
+      const msg = h("div", { class: "msg", role: "status" });
+      const save = h("button", { class: "btn", type: "button", text: "Save weigh-in" });
+      save.addEventListener("click", async () => {
+        const v = num(kg.value), d = date.value;
+        if (!d) { msg.className = "msg err"; msg.textContent = "Pick a date."; return; }
+        if (!v || v < 30 || v > 300) { msg.className = "msg err"; msg.textContent = "Enter your weight in kg (30–300)."; return; }
+        save.disabled = true;
+        try {
+          if (w && w.date !== d) { const { error } = await sb.from("weights").delete().eq("date", w.date).eq("user_id", S.user.id); if (error) throw error; }
+          const { error } = await sb.from("weights").upsert({ user_id: S.user.id, date: d, kg: Math.round(v * 10) / 10, note: note.value.trim() || null }, { onConflict: "user_id,date" });
+          if (error) throw error;
+          closeSheet(); toast("Weigh-in saved"); await loadProfile(); await refresh();
+        } catch (e) { msg.className = "msg err"; msg.textContent = errText(e); save.disabled = false; }
+      });
+      pg.append(sheetHead(w ? "Edit weigh-in" : "Add weigh-in", { left: ["‹ Back", closeSheet] }),
+        h("section", { class: "card" }, h("div", { class: "grid2" }, field("Date", date), field("Weight (kg)", kg)), field("Note", note),
+          h("div", { class: "tiny muted", text: "Weigh in the morning, after the bathroom, before eating, for the steadiest trend." })),
+        msg, save);
+    });
+  }
+
+  // ---------- Progress photos (private Storage bucket "photos", files under <your id>/) ----------
+  function resizeImage(file, max = 1600) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(b => b ? res(b) : rej(new Error("Couldn't read that photo.")), "image/jpeg", 0.85);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("Couldn't read that photo.")); };
+      img.src = url;
+    });
+  }
+  function renderPhotos(view) {
+    const grid = h("div", { class: "pgrid" });
+    const file = h("input", { type: "file", accept: "image/*", hidden: true });
+    const card = h("section", { class: "card" },
+      h("div", { class: "row" }, h("h2", { text: "Progress photos" }), h("button", { class: "pill accent", text: "+ Add photo", onclick: () => file.click() })),
+      file, grid);
+    view.append(card);
+    file.addEventListener("change", async () => {
+      const f = file.files && file.files[0]; file.value = "";
+      if (!f) return;
+      const d = S.day <= today() ? S.day : today();
+      toast("Uploading…");
+      try {
+        const blob = await resizeImage(f);
+        const path = `${S.user.id}/${d}-${Date.now()}.jpg`;
+        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType: "image/jpeg" });
+        if (error) throw error;
+        const { error: e2 } = await sb.from("photos").insert({ date: d, path });
+        if (e2) throw e2;
+        toast(`Photo saved for ${dShort(d)}`); load();
+      } catch (e) { toast(errText(e)); }
+    });
+    async function load() {
+      grid.innerHTML = "";
+      const { data, error } = await sb.from("photos").select("*").order("date", { ascending: false }).limit(60);
+      if (error) { grid.append(h("div", { class: "msg err", text: errText(error) })); return; }
+      if (!data.length) { grid.append(h("div", { class: "empty", style: "grid-column:1/-1", text: "Add a photo every few weeks to see the change. Photos are private to you." })); return; }
+      const { data: urls } = await sb.storage.from("photos").createSignedUrls(data.map(x => x.path), 3600);
+      data.forEach((ph, i) => {
+        const u = urls && urls[i] && urls[i].signedUrl;
+        grid.append(h("button", { type: "button", "aria-label": "Photo from " + dShort(ph.date), onclick: () => photoSheet(ph, u, load) },
+          u ? h("img", { src: u, alt: "", loading: "lazy" }) : h("span", { class: "tiny muted", text: "unavailable" }),
+          h("span", { class: "pdate", text: dShort(ph.date) })));
+      });
+    }
+    load();
+  }
+  function photoSheet(ph, url, onChange) {
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      let armed = false;
+      const del = h("button", { class: "btn ghost", type: "button", style: "color:var(--err)", text: "Delete photo" });
+      del.addEventListener("click", async () => {
+        if (!armed) { armed = true; del.textContent = "Tap again to delete"; setTimeout(() => { armed = false; if (del.isConnected) del.textContent = "Delete photo"; }, 3000); return; }
+        del.disabled = true;
+        await sb.storage.from("photos").remove([ph.path]);
+        const { error } = await sb.from("photos").delete().eq("id", ph.id);
+        if (error) { toast(errText(error)); del.disabled = false; return; }
+        closeSheet(); toast("Photo deleted"); onChange();
+      });
+      const w = S.weights.filter(x => x.date <= ph.date).pop();
+      pg.append(sheetHead(parse(ph.date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }), { left: ["‹ Back", closeSheet] }),
+        url ? h("img", { src: url, alt: "Progress photo", style: "width:100%;border-radius:16px" }) : h("div", { class: "empty", text: "Couldn't load this photo." }),
+        w ? h("div", { class: "small muted num", style: "text-align:center", text: `Weight then: ${r1(Number(w.kg))} kg (${dShort(w.date)})` }) : "",
+        del);
+    });
+  }
+
+  // ---------- Nutrition trends (from the Diary) ----------
+  function trendsSheet() {
+    let n = 7;
+    openSheet(el => {
+      const pg = h("div", { class: "page" }); el.append(pg);
+      const body = h("div", { style: "display:grid;gap:12px" });
+      pg.append(sheetHead("Nutrition trends", { left: ["Close", closeSheet] }),
+        seg([[7, "Week"], [30, "Month"], [90, "3 months"]], n, v => { n = Number(v); draw(); }), body);
+      async function draw() {
+        body.innerHTML = ""; body.append(h("div", { class: "small muted", text: "Loading…" }));
+        const end = today(), endD = parse(end);
+        const hmStart = addDays(endD, -((endD.getDay() + 6) % 7) - 7 * 11);     // Monday, 12 weeks back
+        const start = iso(addDays(endD, -(n - 1)));
+        const from = start < iso(hmStart) ? start : iso(hmStart);
+        const { data, error } = await sb.from("diary_entries").select("date,kcal,protein,carbs,fat,fibre").gte("date", from).lte("date", end);
+        body.innerHTML = "";
+        if (error) { body.append(h("div", { class: "msg err", text: errText(error) })); return; }
+        const day = {};
+        (data || []).forEach(e => { const d = day[e.date] || (day[e.date] = { kcal: 0, protein: 0, carbs: 0, fat: 0, fibre: 0 }); ["kcal", "protein", "carbs", "fat", "fibre"].forEach(k => d[k] += n0(e[k])); });
+        const g = goalsFor(S.profile, goalKg(end).kg, end) || { kcal: 2000, protein: 0, carbs: 0, fat: 0, fibre: 30 };
+        const days = Array.from({ length: n }, (_, i) => iso(addDays(parse(start), i)));
+        const logged = days.filter(d => day[d]);
+        const avg = k => logged.length ? logged.reduce((s, d) => s + day[d][k], 0) / logged.length : null;
+        const stat = (k, v, goal, u, c) => h("div", null, h("span", { class: "v", style: c ? `color:${c}` : "" }, v == null ? "–" : (u === "kcal" ? fmt(v) : r1(v)), h("small", { text: u })),
+          h("span", { class: "k", text: goal ? `${k} / ${fmt(goal)}` : k }));
+        body.append(h("section", { class: "card" }, h("h3", { text: "Daily average" }),
+          h("div", { class: "ngrid num" }, stat("kcal", avg("kcal"), g.kcal, "kcal", "var(--kcal)"), stat("Protein", avg("protein"), g.protein, "g", "var(--prot)"),
+            stat("Carbs", avg("carbs"), g.carbs, "g"), stat("Fat", avg("fat"), g.fat, "g"), stat("Fibre", avg("fibre"), g.fibre, "g", "var(--fibre)")),
+          h("div", { class: "small muted", text: `Over ${logged.length} logged day${logged.length === 1 ? "" : "s"} of ${n}. Days with nothing logged are left out. Fibre goal reached on ${logged.filter(d => day[d].fibre >= g.fibre).length}.` })),
+          h("section", { class: "card" }, h("h3", { text: "Calories per day" }),
+            barChart(days, days.map(d => day[d] ? day[d].kcal : null), g.kcal, "kcal", v => v > g.kcal * 1.05 ? "#fa114f" : "#1e7fd8"),
+            h("div", { class: "tiny muted", text: "Blue: at or under your goal (exercise not included). Pink: more than 5% over." })));
+        // Fibre heatmap: 12 weeks × 7 days, Monday at the top.
+        const cell = 20, gap = 4, left = 18, cols = 12;
+        const lvl = f => f == null ? "var(--seg)" : ["#d4f1f3", "#9fe0e6", "#5cc6cf", "#23a9b4", "#0b7f88"][Math.min(4, Math.floor(f / g.fibre * 4))];
+        let s = `<svg viewBox="0 0 ${left + cols * (cell + gap)} ${7 * (cell + gap)}" width="100%" role="img" aria-label="Fibre per day for the last 12 weeks">`;
+        ["M", "", "W", "", "F", "", "S"].forEach((l, r) => { if (l) s += `<text x="0" y="${r * (cell + gap) + 14}" font-size="10" fill="var(--muted)">${l}</text>`; });
+        for (let c = 0; c < cols; c++) for (let r = 0; r < 7; r++) {
+          const d = iso(addDays(hmStart, c * 7 + r));
+          if (d > end) continue;
+          const f = day[d] ? day[d].fibre : null;
+          s += `<rect x="${left + c * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="4" fill="${lvl(f)}"><title>${dShort(d)}: ${f == null ? "nothing logged" : r1(f) + " g fibre"}</title></rect>`;
+        }
+        const legend = h("div", { class: "row tiny muted", style: "justify-content:flex-start;gap:4px" }, "Less",
+          ...["var(--seg)", "#d4f1f3", "#9fe0e6", "#5cc6cf", "#23a9b4", "#0b7f88"].map(c => h("span", { style: `display:inline-block;width:12px;height:12px;border-radius:3px;background:${c}` })), `${g.fibre} g+`);
+        body.append(h("section", { class: "card" }, h("h3", { text: "Fibre, last 12 weeks" }), h("div", { html: s + "</svg>" }), legend,
+          h("div", { class: "tiny muted", text: "Grey: nothing logged. Darkest: fibre goal reached." })));
+      }
+      draw();
     });
   }
 
@@ -625,9 +907,10 @@
             const { error: we } = await sb.from("weights").upsert({ user_id: S.user.id, date: t, kg }, { onConflict: "user_id,date" });
             if (we) throw we;
           }
+          // Saving the profile resets the weight the goals use to the one typed here (see goalKg).
+          const g = goalsFor(Object.assign({}, S.profile, row), kg, t);
+          if (g) await sb.from("goal_history").insert({ date: t, kg, kcal: g.kcal, protein: g.protein, fat: g.fat, carbs: g.carbs, fibre: g.fibre, reason: "Profile saved" });
           await loadProfile();
-          const g = goalsFor(S.profile, weightOn(t), t);
-          if (g) await sb.from("goal_history").insert({ date: t, kcal: g.kcal, protein: g.protein, fat: g.fat, carbs: g.carbs, fibre: g.fibre, reason: "Profile saved" });
           closeAll(); toast("Profile saved"); await refresh();
         } catch (e) { msg.className = "msg err"; msg.textContent = errText(e); save.disabled = false; }
       });
